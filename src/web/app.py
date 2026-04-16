@@ -935,30 +935,10 @@ def _build_utsf_diff(a: dict, b: dict) -> dict:
 
 @app.get("/api/status")
 def api_status():
-    try:
-        from intelligence.ollama_client import get_available_models
-        models = get_available_models()
-        ollama_ok = len(models) > 0
-    except Exception:
-        models = []
-        ollama_ok = False
-
-    transporter_count = len(list_transporters())
-    output_count = 0
-    if os.path.isdir(OUTPUT_DIR):
-        output_count = len([f for f in os.listdir(OUTPUT_DIR) if f.endswith(".utsf.json")])
-
     return jsonify({
-        "ollama":        ollama_ok,
-        "models":        models,
-        "transporters":  transporter_count,
-        "outputs":       output_count,
-        "active":        list(_active_generations),
-        "app_version":   APP_VERSION,
-        "oicr_engine":   OICR_ENGINE,
-        "utsf_schema":   UTSF_SCHEMA,
-    })
-
+        "status": "ok",
+        "app_version": APP_VERSION
+    }), 200
 
 # ─── Routes: Input Data ───────────────────────────────────────────────────────
 

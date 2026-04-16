@@ -23,7 +23,12 @@ RUN mkdir -p transporters output
 
 EXPOSE 8080
 
-CMD gunicorn "src.web.app:app" \
+# --chdir tells gunicorn to cd into src/web/ before importing.
+# app.py uses __file__ for path resolution so ROOT_DIR/SRC_DIR still resolve
+# correctly to /app. Do NOT use "src.web.app:app" — src/ has no __init__.py
+# so Python cannot resolve it as a package and gunicorn will crash on import.
+CMD gunicorn app:app \
+    --chdir /app/src/web \
     --bind "0.0.0.0:${PORT:-8080}" \
     --threads 4 \
     --timeout 300 \

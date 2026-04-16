@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p transporters output
+RUN mkdir -p transporters output && chmod +x /app/start.sh
 
 # Build-time smoke test — import error here fails the build with a visible reason
 RUN PYTHONPATH=/app/src python -c "import sys; sys.path.insert(0, '/app/src'); import os; os.chdir('/app/src/web'); from app import app; print('[SMOKE TEST OK]')"

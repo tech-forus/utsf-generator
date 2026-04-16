@@ -45,72 +45,56 @@ def find_free_port(preferred: int = 5000) -> int:
     return preferred  # Fallback — Flask will error if this fails too
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 def main():
-    # Use Railway port if available; otherwise use a local free port
-    if os.environ.get("PORT"):
-        port = int(os.environ["PORT"])
-        host = "0.0.0.0"
-    else:
-        port = find_free_port(5000)
-        host = "127.0.0.1"
+    port = find_free_port(5000)
+    url  = f"http://127.0.0.1:{port}"
 
-    url = f"http://{host}:{port}"
-
-    # Fresh start cleanup
+    # ── 3. Fresh Start Management ─────────────────────────────────────────────
+    # If a .fresh_start file exists, OR if --fresh is in sys.argv, clear transient data
     if "--fresh" in sys.argv or os.path.exists(os.path.join(ROOT_DIR, ".fresh_start")):
-        print("  [Session] Starting afresh — clearing session data...")
-
-        # Clear output JSONs
+        print(f"  [Session] Starting afresh — clearing session data...")
+        # Clear output
         out_dir = os.path.join(ROOT_DIR, "output")
         if os.path.isdir(out_dir):
             for f in os.listdir(out_dir):
                 if f.endswith(".json"):
-                    try:
-                        os.remove(os.path.join(out_dir, f))
-                    except:
-                        pass
-
-        # Clear temp / random transporters
+                    try: os.remove(os.path.join(out_dir, f))
+                    except: pass
+        # Clear 'randomly named' or test transporters
         trans_dir = os.path.join(ROOT_DIR, "transporters")
         if os.path.isdir(trans_dir):
             import shutil
             for d in os.listdir(trans_dir):
+                # Don't delete canonical ones or company_details
                 if d in ["tci_freight", "v_express", "delhivery", "ekart_logistics"]:
                     continue
+                # If directory name looks like a hash or is very short/weird
                 if len(d) > 8 or "." in d or "," in d:
-                    try:
-                        shutil.rmtree(os.path.join(trans_dir, d))
-                    except:
-                        pass
-
+                    try: shutil.rmtree(os.path.join(trans_dir, d))
+                    except: pass
+        
     # Force UTF-8 output
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    print("\n  UTSF Generator v9")
-    print(f"  Starting server at http://{host}:{port}")
+    print(f"\n  UTSF Generator v9")
+    print(f"  Starting server at {url}")
+    print(f"  Your browser will open automatically.")
+    print(f"  Close this window to stop the server.\n")
 
-    # Only open browser for local desktop runs
-    if not os.environ.get("PORT"):
-        print("  Your browser will open automatically.")
-        print("  Close this window to stop the server.\n")
+    # Open browser after a short delay (gives Flask time to start)
+    def _open():
+        time.sleep(1.8)
+        webbrowser.open(url)
 
-        def _open():
-            time.sleep(1.8)
-            webbrowser.open(f"http://127.0.0.1:{port}")
+    threading.Thread(target=_open, daemon=True).start()
 
-        threading.Thread(target=_open, daemon=True).start()
-
-    # Start Flask app
+    # Import and run Flask app
     from web.app import app, configure_paths
     configure_paths(ROOT_DIR, BUNDLE_DIR)
+    app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
 
-    app.run(
-        host=host,
-        port=port,
-        debug=False,
-        use_reloader=False
-    )
 
 if __name__ == "__main__":
     main()

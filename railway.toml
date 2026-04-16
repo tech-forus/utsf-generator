@@ -2,6 +2,7 @@
 builder = "dockerfile"
 
 [deploy]
+startCommand = "cd /app/src/web && PYTHONPATH=/app/src exec gunicorn app:app --bind 0.0.0.0:$PORT --threads 4 --timeout 300 --log-level debug --access-logfile - --error-logfile -"
 healthcheckPath = "/api/status"
 healthcheckTimeout = 60
 restartPolicyType = "on_failure"

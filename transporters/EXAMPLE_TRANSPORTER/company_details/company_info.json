@@ -1,0 +1,18 @@
+{
+  "name": "Example Logistics Pvt Ltd",
+  "shortName": "ELP",
+  "code": "ELP001",
+  "transportMode": "road",
+  "serviceType": "LTL",
+  "gstNo": "07AABCE1234F1Z5",
+  "panNo": "AABCE1234F",
+  "phone": "011-12345678",
+  "email": "ops@examplelogistics.in",
+  "address": "123 Transport Nagar",
+  "city": "New Delhi",
+  "state": "Delhi",
+  "pincode": "110045",
+  "website": "https://www.examplelogistics.in",
+  "status": "active",
+  "verified": false
+}

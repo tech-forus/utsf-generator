@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — UTSF Generator{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-8">
+  <div>
+    <h1 class="text-2xl font-bold text-white">Transporters</h1>
+    <p class="text-gray-500 text-sm mt-1">{{ transporters|length }} transporter(s) · Drag any file in — UTSF v2.1 out</p>
+  </div>
+  <button onclick="document.getElementById('new-modal').showModal()"
+    class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+    + New Transporter
+  </button>
+</div>
+
+{% if transporters %}
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+  {% for t in transporters %}
+  <div class="card rounded-xl p-5 hover:border-indigo-600/50 transition-colors flex flex-col gap-4">
+
+    <!-- Header -->
+    <div class="flex items-start justify-between">
+      <div>
+        <h2 class="font-semibold text-white text-base">
+          {{ t.output.company_name if t.output else t.name.replace('_', ' ').title() }}
+        </h2>
+        <div class="flex items-center gap-2 mt-0.5">
+          <p class="text-gray-500 text-xs font-mono">{{ t.name }}</p>
+          {% if t.tid %}<span class="text-indigo-400 text-xs font-mono bg-indigo-900/20 px-1.5 py-0.5 rounded border border-indigo-900/40">{{ t.tid }}</span>{% endif %}
+        </div>
+      </div>
+      {% if t.is_generating %}
+        <span class="bg-blue-900/40 text-blue-300 text-xs px-2 py-0.5 rounded-full animate-pulse">Generating...</span>
+      {% elif t.output %}
+        <span class="bg-green-900/40 text-green-400 text-xs px-2 py-0.5 rounded-full">Generated</span>
+      {% else %}
+        <span class="bg-gray-800 text-gray-500 text-xs px-2 py-0.5 rounded-full">Pending</span>
+      {% endif %}
+    </div>
+
+    <!-- File counts -->
+    <div class="flex gap-2">
+      {% set icons = {'company_details': '🏢', 'charges': '💰', 'zone_data': '🗺️'} %}
+      {% for sub in ['company_details', 'charges', 'zone_data'] %}
+      <span class="text-xs px-2 py-1 rounded-md {% if t.counts[sub] > 0 %}bg-indigo-900/30 text-indigo-300{% else %}bg-gray-800 text-gray-600{% endif %}">
+        {{ icons[sub] }} {{ t.counts[sub] }} file{{ 's' if t.counts[sub] != 1 }}
+      </span>
+      {% endfor %}
+    </div>
+
+    <!-- Quality bar (if generated) -->
+    {% if t.output %}
+    <div>
+      <div class="flex justify-between text-xs mb-1">
+        <span class="text-gray-400">Data Quality</span>
+        <span class="font-mono
+          {% if t.output.quality >= 75 %}text-green-400
+          {% elif t.output.quality >= 50 %}text-yellow-400
+          {% else %}text-red-400{% endif %}">
+          {{ t.output.quality|int }}/100
+        </span>
+      </div>
+      <div class="h-1.5 rounded-full bg-gray-800">
+        <div class="h-1.5 rounded-full transition-all
+          {% if t.output.quality >= 75 %}bg-green-500
+          {% elif t.output.quality >= 50 %}bg-yellow-500
+          {% else %}bg-red-500{% endif %}"
+          style="width: {{ t.output.quality }}%"></div>
+      </div>
+      <div class="flex gap-3 mt-2 text-xs text-gray-500">
+        <span>{{ "{:,}".format(t.output.pincodes) }} pincodes</span>
+        <span>{{ t.output.zones }} zones</span>
+        <span class="text-indigo-400">{{ t.output.format }}</span>
+      </div>
+    </div>
+    {% else %}
+    <p class="text-gray-600 text-xs">No UTSF generated yet</p>
+    {% endif %}
+
+    <!-- Actions -->
+    <div class="flex gap-2 mt-auto pt-2 border-t border-[#2a2d3a]">
+      <a href="/transporter/{{ t.name }}"
+        class="flex-1 text-center text-sm py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors">
+        Manage Files
+      </a>
+      <button onclick="deleteTransporter('{{ t.name }}')"
+        title="Delete this Transporter (Irreversible!)"
+        class="px-3 py-2 rounded-lg bg-red-900/20 hover:bg-red-900/40 text-red-500 hover:text-red-400 transition-colors text-sm border border-red-900/30">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+      </button>
+
+      {% if t.output %}
+      <a href="/output/{{ t.name }}"
+        class="flex-1 text-center text-sm py-2 rounded-lg bg-indigo-900/50 hover:bg-indigo-800/60 text-indigo-300 hover:text-indigo-100 transition-colors">
+        View UTSF
+      </a>
+      <button onclick="deleteUTSF('{{ t.name }}')"
+        title="Delete generated UTSF (Source files safe)"
+        class="px-3 py-2 rounded-lg bg-orange-900/20 hover:bg-orange-900/40 text-orange-500 hover:text-orange-400 transition-colors text-sm border border-orange-900/30">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v13a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+      </button>
+      {% else %}
+      <a href="/transporter/{{ t.name }}"
+        class="flex-1 text-center text-sm py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
+        Generate →
+      </a>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+<!-- Empty state -->
+<div class="flex flex-col items-center justify-center border-2 border-dashed border-[#2a2d3a] rounded-2xl py-24 text-center">
+  <div class="text-5xl mb-4">📦</div>
+  <h3 class="text-xl font-semibold text-white mb-2">No transporters yet</h3>
+  <p class="text-gray-500 text-sm mb-6 max-w-sm">
+    Add your first transporter to start generating FC4 UTSF files from your data.
+  </p>
+  <button onclick="document.getElementById('new-modal').showModal()"
+    class="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2.5 rounded-lg text-sm font-medium transition-colors">
+    + Add Transporter
+  </button>
+</div>
+{% endif %}
+
+<!-- New Transporter Modal -->
+<dialog id="new-modal" class="bg-[#1a1d27] border border-[#2a2d3a] rounded-xl p-6 w-full max-w-md text-white backdrop:bg-black/60">
+  <h2 class="text-lg font-semibold mb-4">New Transporter</h2>
+  <form method="POST" action="/transporter/create">
+    <label class="block text-sm text-gray-400 mb-1">Transporter Name</label>
+    <input name="name" type="text" required placeholder="e.g. Delhivery, BlueDart, DTDC"
+      class="w-full bg-[#0f1117] border border-[#2a2d3a] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500 mb-4">
+    <p class="text-xs text-gray-600 mb-4">
+      A folder will be created with <code class="text-indigo-400">company_details/</code>,
+      <code class="text-indigo-400">charges/</code>, and <code class="text-indigo-400">zone_data/</code> subfolders.
+    </p>
+    <div class="flex gap-3 justify-end">
+      <button type="button" onclick="document.getElementById('new-modal').close()"
+        class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Cancel</button>
+      <button type="submit"
+        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg transition-colors">
+        Create
+      </button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  async function deleteUTSF(name) {
+    if (!confirm(`Delete generated UTSF for "${name}"?\nSource files will remain — you can regenerate any time.`)) return;
+    const resp = await fetch(`/output/${name}`, { method: 'DELETE' });
+    const data = await resp.json();
+    if (data.ok) location.reload();
+    else alert('Delete failed: ' + (data.error || 'Unknown error'));
+  }
+
+  async function deleteTransporter(name) {
+    if (!confirm(`CAUTION: Delete all files for "${name}"?\nThis will remove the folder from disk irreversibly.`)) return;
+    const resp = await fetch(`/transporter/${name}`, { method: 'DELETE' });
+    const data = await resp.json();
+    if (data.ok) location.reload();
+    else alert('Delete failed: ' + (data.error || 'Unknown error'));
+  }
+</script>
+{% endblock %}

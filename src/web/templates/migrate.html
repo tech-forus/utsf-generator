@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Migrate v2 → FC4 — UTSF Generator{% endblock %}
+
+{% block content %}
+<nav class="text-sm text-gray-500 mb-6">
+  <a href="/" class="hover:text-white">Dashboard</a>
+  <span class="mx-2">›</span>
+  <span class="text-white">Migrate v2 → FC4</span>
+</nav>
+
+<div class="max-w-xl mx-auto">
+  <h1 class="text-2xl font-bold text-white mb-2">Migrate UTSF v2 → FC4</h1>
+  <p class="text-gray-500 text-sm mb-8">
+    Upload an existing UTSF v2.0 file and get back a clean FC4 format.
+    All data is preserved — modes are normalized, ODA is moved inline, company block is updated.
+  </p>
+
+  <!-- What changes -->
+  <div class="card rounded-xl p-5 mb-6">
+    <h3 class="text-sm font-semibold text-gray-300 mb-3">What the migration does</h3>
+    <ul class="space-y-2 text-xs text-gray-400">
+      <li class="flex gap-2"><span class="text-indigo-400">→</span> <code class="text-gray-300">meta</code> block renamed to <code class="text-gray-300">company</code> with status/verified/blacklist fields</li>
+      <li class="flex gap-2"><span class="text-indigo-400">→</span> <code class="text-gray-300">FULL_MINUS_EXCEPT</code> normalized to <code class="text-green-400">EXCLUDING</code></li>
+      <li class="flex gap-2"><span class="text-indigo-400">→</span> <code class="text-gray-300">ONLY_SERVED</code> normalized to <code class="text-yellow-400">INCLUDING</code></li>
+      <li class="flex gap-2"><span class="text-indigo-400">→</span> <code class="text-gray-300">oda</code> block merged inline into each zone's serviceability entry</li>
+      <li class="flex gap-2"><span class="text-indigo-400">→</span> All charges get <code class="text-gray-300">enabled</code> flags based on values</li>
+      <li class="flex gap-2"><span class="text-indigo-400">→</span> <code class="text-gray-300">dataQuality</code> score computed (0–100)</li>
+      <li class="flex gap-2"><span class="text-indigo-400">→</span> Version set to <code class="text-gray-300">4.0</code>, format set to <code class="text-gray-300">FC4</code></li>
+    </ul>
+  </div>
+
+  <!-- Error display -->
+  {% if error %}
+  <div class="bg-red-950/30 border border-red-800/50 rounded-lg p-4 mb-6">
+    <p class="text-red-400 text-sm font-semibold mb-1">Migration failed</p>
+    <p class="text-red-300 text-xs">{{ error }}</p>
+  </div>
+  {% endif %}
+
+  <!-- Upload form -->
+  <form method="POST" action="/migrate" enctype="multipart/form-data">
+    <!-- Drop zone -->
+    <div id="drop-zone"
+      class="border-2 border-dashed border-[#2a2d3a] rounded-xl p-12 text-center cursor-pointer
+             hover:border-indigo-600/60 hover:bg-indigo-950/10 transition-all mb-4"
+      ondragover="event.preventDefault(); this.classList.add('border-indigo-500','bg-indigo-950/20')"
+      ondragleave="this.classList.remove('border-indigo-500','bg-indigo-950/20')"
+      ondrop="handleDrop(event)"
+      onclick="document.getElementById('file-input').click()">
+      <div class="text-4xl mb-3" id="drop-icon">📄</div>
+      <p class="text-gray-400 text-sm" id="drop-label">Drop your v2 UTSF file here</p>
+      <p class="text-gray-600 text-xs mt-1">or click to browse — accepts .json only</p>
+      <p id="file-name" class="text-indigo-300 text-sm mt-3 hidden font-mono"></p>
+    </div>
+
+    <input type="file" id="file-input" name="file" accept=".json" class="hidden"
+      onchange="onFileSelect(this)">
+
+    <button type="submit" id="submit-btn" disabled
+      class="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40
+             disabled:cursor-not-allowed text-white font-medium transition-colors">
+      Migrate & View FC4 →
+    </button>
+  </form>
+
+  <!-- Batch info -->
+  <div class="mt-8 p-4 bg-gray-900/50 rounded-lg border border-[#2a2d3a]">
+    <p class="text-xs text-gray-500">
+      <strong class="text-gray-400">Batch migration?</strong>
+      Run <code class="text-indigo-400 bg-[#1a1d27] px-1.5 py-0.5 rounded">migrate_v2.bat</code>
+      from the generator folder to migrate all v2 UTSF files at once.
+    </p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function handleDrop(e) {
+    e.preventDefault();
+    document.getElementById('drop-zone').classList.remove('border-indigo-500', 'bg-indigo-950/20');
+    const file = e.dataTransfer.files[0];
+    if (file) setFile(file);
+  }
+
+  function onFileSelect(input) {
+    if (input.files[0]) setFile(input.files[0]);
+  }
+
+  function setFile(file) {
+    if (!file.name.endsWith('.json')) {
+      alert('Please select a .json UTSF file');
+      return;
+    }
+    document.getElementById('drop-icon').textContent = '✓';
+    document.getElementById('drop-label').textContent = 'File selected';
+    const nameEl = document.getElementById('file-name');
+    nameEl.textContent = file.name;
+    nameEl.classList.remove('hidden');
+    document.getElementById('submit-btn').disabled = false;
+    // Sync to hidden file input for form submission
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    document.getElementById('file-input').files = dt.files;
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,36 @@
+{
+  "docketCharges": 60,
+  "minCharges": 200,
+  "minWeight": 0.5,
+  "volumetricDivisor": 5000,
+  "greenTax": 25,
+  "daccCharges": 50,
+  "miscCharges": 0,
+  "fuel": 18,
+  "rovCharges": {
+    "type": "percentage_freight",
+    "variable": 0.5,
+    "fixed": 50,
+    "basis": "freight"
+  },
+  "insuranceCharges": {
+    "variable": 0,
+    "fixed": 0
+  },
+  "odaCharges": {
+    "type": "per_kg_minimum",
+    "perKg": 5,
+    "minimum": 100
+  },
+  "handlingCharges": {
+    "type": "percentage_freight",
+    "variable": 0,
+    "fixed": 0
+  },
+  "fmCharges": {"variable": 0, "fixed": 0},
+  "appointmentCharges": {"variable": 0, "fixed": 0},
+  "codCharges": {"variable": 1.5, "fixed": 50},
+  "topayCharges": {"variable": 0, "fixed": 0},
+  "prepaidCharges": {"variable": 0, "fixed": 0},
+  "dodCharges": 0
+}

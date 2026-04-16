@@ -1,0 +1,20 @@
+{
+  "DEL/NCR": {
+    "DEL/NCR": 6,
+    "REST_NORTH": 7,
+    "HP": 12,
+    "JAMMU": 11,
+    "SRINAGAR": 20,
+    "SOUTH": 11,
+    "KERALA": 15,
+    "WEST": 10,
+    "CENTRAL": 11
+  },
+
+  "REST_NORTH": {
+    "DEL/NCR": 7,
+    "REST_NORTH": 7,
+    "SOUTH": 11,
+    "KERALA": 15
+  }
+}

@@ -1,0 +1,414 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} — UTSF Generator{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<nav class="text-sm text-gray-500 mb-6">
+  <a href="/" class="hover:text-white">Dashboard</a>
+  <span class="mx-2">›</span>
+  <span class="text-white">{{ name.replace('_', ' ').title() }}</span>
+</nav>
+
+<!-- Header -->
+<div class="flex items-center justify-between mb-8 flex-wrap gap-4">
+  <div>
+    <h1 class="text-2xl font-bold text-white">
+      {{ output.company_name if output else name.replace('_', ' ').title() }}
+    </h1>
+    <div class="flex items-center gap-2 mt-1">
+      <p class="text-gray-500 text-xs font-mono">{{ name }}</p>
+      {% if tid %}<span class="text-indigo-400 text-xs font-mono bg-indigo-900/20 px-1.5 py-0.5 rounded border border-indigo-900/40">{{ tid }}</span>{% endif %}
+    </div>
+  </div>
+  <button id="generate-btn" onclick="startGenerate('{{ name }}')"
+    {% if is_generating %}disabled{% endif %}
+    class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed
+           text-white px-5 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+    <span id="generate-icon">⚡</span>
+    <span id="generate-label">{% if is_generating %}Generating...{% else %}Generate UTSF{% endif %}</span>
+  </button>
+</div>
+
+<!-- Current output summary -->
+{% if output %}
+<div class="card rounded-xl p-4 mb-6 flex items-center gap-6 flex-wrap">
+  <div class="text-center">
+    <div class="text-2xl font-bold
+      {% if output.quality >= 75 %}text-green-400{% elif output.quality >= 50 %}text-yellow-400{% else %}text-red-400{% endif %}">
+      {{ output.quality|int }}</div>
+    <div class="text-xs text-gray-500">Quality</div>
+  </div>
+  <div class="w-px h-10 bg-[#2a2d3a] hidden sm:block"></div>
+  <div class="text-center">
+    <div class="text-xl font-bold text-white">{{ "{:,}".format(output.pincodes) }}</div>
+    <div class="text-xs text-gray-500">Pincodes</div>
+  </div>
+  <div class="w-px h-10 bg-[#2a2d3a] hidden sm:block"></div>
+  <div class="text-center">
+    <div class="text-xl font-bold text-white">{{ output.zones }}</div>
+    <div class="text-xs text-gray-500">Zones</div>
+  </div>
+  <div class="ml-auto flex gap-3">
+    <a href="/output/{{ name }}"
+      class="text-sm px-4 py-2 rounded-lg bg-indigo-900/40 hover:bg-indigo-800/50 text-indigo-300 transition-colors">
+      View UTSF →
+    </a>
+    <a href="/output/{{ name }}/download"
+      class="text-sm px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors">
+      Download
+    </a>
+    <button onclick="deleteUTSF('{{ name }}')"
+      title="Delete generated UTSF"
+      class="text-sm px-4 py-2 rounded-lg bg-red-900/20 hover:bg-red-900/40 text-red-500 hover:text-red-400 transition-colors border border-red-900/30">
+      Delete UTSF
+    </button>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── SMART DROP ZONE ─────────────────────────────────────────────────────── -->
+<div class="card rounded-xl p-6 mb-6">
+  <div class="flex items-start justify-between mb-4">
+    <div>
+      <h2 class="font-semibold text-white">Drop Your Files</h2>
+      <p class="text-gray-500 text-xs mt-1">
+        Dump everything here — Excel, PDF, images, JSON. We'll sort them automatically.
+      </p>
+    </div>
+    <div class="text-xs text-gray-600 text-right">
+      <div>Excel · CSV · PDF · Word</div>
+      <div>PowerPoint · Images · JSON</div>
+    </div>
+  </div>
+
+  <!-- Drop target -->
+  <div id="main-drop-zone"
+    class="border-2 border-dashed border-[#2a2d3a] rounded-xl p-10 text-center cursor-pointer
+           transition-all hover:border-indigo-600/50 hover:bg-indigo-950/10"
+    ondragover="onDragOver(event)"
+    ondragleave="onDragLeave(event)"
+    ondrop="onDrop(event)"
+    onclick="document.getElementById('main-file-input').click()">
+    <div class="text-4xl mb-3" id="drop-icon">📂</div>
+    <p class="text-gray-300 text-base font-medium" id="drop-title">Drop all your files here</p>
+    <p class="text-gray-600 text-sm mt-1">or click to browse</p>
+    <p class="text-gray-700 text-xs mt-3">Accepts: .xlsx .xls .csv .pdf .docx .json .png .jpg .jpeg</p>
+  </div>
+  <input id="main-file-input" type="file" multiple class="hidden"
+    accept=".xlsx,.xls,.csv,.tsv,.docx,.doc,.pptx,.ppt,.pdf,.json,.png,.jpg,.jpeg,.tiff,.bmp,.webp"
+    onchange="uploadFiles(this.files)">
+
+  <!-- Upload progress -->
+  <div id="upload-progress" class="hidden mt-4">
+    <div class="h-1.5 rounded-full bg-gray-800 overflow-hidden">
+      <div id="upload-bar" class="h-1.5 bg-indigo-500 transition-all duration-300" style="width:0%"></div>
+    </div>
+    <p id="upload-status" class="text-xs text-gray-500 mt-2 text-center">Uploading and sorting...</p>
+  </div>
+
+  <!-- Sort result toast -->
+  <div id="sort-result" class="hidden mt-4 space-y-1.5"></div>
+</div>
+
+<!-- ── CURRENT FILES ──────────────────────────────────────────────────────── -->
+{% set total_files = files.company_details|length + files.charges|length + files.zone_data|length %}
+{% if total_files > 0 %}
+<div class="card rounded-xl p-5 mb-6">
+  <div class="flex items-center justify-between mb-4">
+    <h2 class="font-semibold text-white">Sorted Files
+      <span class="text-gray-500 font-normal text-sm ml-2">({{ total_files }} total)</span>
+    </h2>
+    <p class="text-xs text-gray-600">Drag a file to move it between categories</p>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    {% set sub_data = [
+      ('company_details', '🏢', 'Company Details', 'GST, PAN, contact info'),
+      ('charges', '💰', 'Charges', 'Rates, docket, fuel, ODA'),
+      ('zone_data', '🗺️', 'Zone Data', 'Zone matrix, pincodes'),
+    ] %}
+    {% for sub, icon, label, hint in sub_data %}
+    {% set sub_files = files[sub] %}
+    <div class="bg-gray-900/50 rounded-lg p-3 border border-[#2a2d3a]"
+         ondragover="event.preventDefault(); this.classList.add('border-indigo-500')"
+         ondragleave="this.classList.remove('border-indigo-500')"
+         ondrop="moveFile(event, '{{ sub }}')">
+      <div class="flex items-center gap-2 mb-3">
+        <span>{{ icon }}</span>
+        <div>
+          <div class="text-sm font-medium text-gray-300">{{ label }}</div>
+          <div class="text-xs text-gray-600">{{ hint }}</div>
+        </div>
+        <span class="ml-auto text-xs text-gray-600">{{ sub_files|length }}</span>
+      </div>
+      {% if sub_files %}
+      <ul class="space-y-1">
+        {% for f in sub_files %}
+        <li class="flex items-center justify-between text-xs group py-0.5"
+            draggable="true"
+            ondragstart="startFileDrag(event, '{{ sub }}', '{{ f.name }}')"
+            title="Drag to move to a different category">
+          <div class="flex items-center gap-1.5 min-w-0 cursor-grab">
+            <span class="text-gray-700">⠿</span>
+            <span class="text-xs font-mono px-1 rounded
+              {% if f.ext in ['xlsx','xls','csv','tsv'] %}text-green-500 bg-green-950/30
+              {% elif f.ext == 'pdf' %}text-red-400 bg-red-950/30
+              {% elif f.ext == 'docx' %}text-blue-400 bg-blue-950/30
+              {% elif f.ext in ['png','jpg','jpeg','bmp'] %}text-purple-400 bg-purple-950/30
+              {% elif f.ext == 'json' %}text-yellow-400 bg-yellow-950/30
+              {% else %}text-gray-500 bg-gray-800{% endif %}">
+              {{ f.ext }}
+            </span>
+            <span class="text-gray-300 truncate">{{ f.name }}</span>
+          </div>
+          <div class="flex items-center gap-1 shrink-0">
+            <span class="text-gray-700 text-xs">{{ f.size }}</span>
+            <button onclick="deleteFile('{{ name }}', '{{ sub }}', '{{ f.name }}')"
+              class="text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 px-1 transition-all">✕</button>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-xs text-gray-700 italic">Empty — auto-sorted files will appear here</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Generation log -->
+<div id="log-section" class="{% if not is_generating %}hidden{% endif %}">
+  <div class="flex items-center justify-between mb-2">
+    <h3 class="text-sm font-medium text-gray-400">Generation Log</h3>
+    <button onclick="document.getElementById('log-section').classList.add('hidden')"
+      class="text-xs text-gray-600 hover:text-gray-400">Hide</button>
+  </div>
+  <div id="log-box"
+    class="bg-[#0a0c10] border border-[#2a2d3a] rounded-xl p-4 h-72 overflow-y-auto font-mono text-xs">
+  </div>
+  <div id="view-link-bar" class="hidden mt-3">
+    <a href="/output/{{ name }}"
+      class="text-sm px-4 py-2 rounded-lg bg-green-900/40 hover:bg-green-800/50 text-green-300 transition-colors">
+      View Generated UTSF →
+    </a>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const TRANSPORTER = {{ name | tojson }};
+
+  async function deleteUTSF(name) {
+    if (!confirm(`Delete generated UTSF for "${name}"?\nSource files stay — you can regenerate any time.`)) return;
+    const resp = await fetch(`/output/${name}`, { method: 'DELETE' });
+    const data = await resp.json();
+    if (data.ok) location.reload();
+    else alert('Delete failed: ' + (data.error || 'Unknown error'));
+  }
+
+  let dragSrc = null;  // {subfolder, filename} for drag-to-move
+
+  // ── Drag & drop onto main zone ──────────────────────────────────────────────
+  function onDragOver(e) {
+    e.preventDefault();
+    if (dragSrc) return;  // Don't activate main zone during file-move drags
+    document.getElementById('main-drop-zone').classList.add('border-indigo-500', 'bg-indigo-950/20');
+  }
+  function onDragLeave(e) {
+    document.getElementById('main-drop-zone').classList.remove('border-indigo-500', 'bg-indigo-950/20');
+  }
+  function onDrop(e) {
+    e.preventDefault();
+    document.getElementById('main-drop-zone').classList.remove('border-indigo-500', 'bg-indigo-950/20');
+    if (dragSrc) return;
+    uploadFiles(e.dataTransfer.files);
+  }
+
+  // ── Upload + auto-sort ──────────────────────────────────────────────────────
+  async function uploadFiles(files) {
+    if (!files || files.length === 0) return;
+
+    const prog = document.getElementById('upload-progress');
+    const bar  = document.getElementById('upload-bar');
+    const stat = document.getElementById('upload-status');
+    const result = document.getElementById('sort-result');
+    const icon = document.getElementById('drop-icon');
+    const title = document.getElementById('drop-title');
+
+    prog.classList.remove('hidden');
+    result.classList.add('hidden');
+    result.innerHTML = '';
+    bar.style.width = '20%';
+    stat.textContent = `Uploading ${files.length} file(s)...`;
+    icon.textContent = '⏳';
+    title.textContent = 'Sorting files...';
+
+    const fd = new FormData();
+    // NO subfolder param — let server auto-classify
+    for (const f of files) fd.append('files', f);
+
+    try {
+      bar.style.width = '60%';
+      const resp = await fetch(`/transporter/${TRANSPORTER}/upload`, { method: 'POST', body: fd });
+      const data = await resp.json();
+      bar.style.width = '100%';
+
+      if (data.ok) {
+        result.classList.remove('hidden');
+
+        // Group by subfolder for display
+        const byFolder = {};
+        for (const s of data.saved) {
+          if (!byFolder[s.subfolder]) byFolder[s.subfolder] = [];
+          byFolder[s.subfolder].push(s.name);
+        }
+
+        const folderLabels = {
+          company_details: { icon: '🏢', label: 'Company Details' },
+          charges:         { icon: '💰', label: 'Charges' },
+          zone_data:       { icon: '🗺️', label: 'Zone Data' },
+        };
+
+        for (const [sub, fnames] of Object.entries(byFolder)) {
+          const { icon: fi, label } = folderLabels[sub] || { icon: '📁', label: sub };
+          const div = document.createElement('div');
+          div.className = 'flex items-start gap-2 text-xs bg-green-950/20 border border-green-800/40 rounded-lg px-3 py-2';
+          div.innerHTML = `<span>${fi}</span>
+            <div>
+              <span class="text-green-400 font-medium">→ ${label}</span>
+              <span class="text-gray-400 ml-2">${fnames.join(', ')}</span>
+            </div>`;
+          result.appendChild(div);
+        }
+
+        if (data.skipped && data.skipped.length > 0) {
+          const div = document.createElement('div');
+          div.className = 'text-xs text-yellow-400 px-3 py-1';
+          div.textContent = 'Skipped (unsupported): ' + data.skipped.join(', ');
+          result.appendChild(div);
+        }
+
+        icon.textContent = '✓';
+        title.textContent = `${data.saved.length} file(s) sorted`;
+        setTimeout(() => location.reload(), 1500);
+      }
+    } catch (err) {
+      stat.textContent = 'Upload failed: ' + err.message;
+      icon.textContent = '📂';
+      title.textContent = 'Drop all your files here';
+    } finally {
+      setTimeout(() => prog.classList.add('hidden'), 2000);
+    }
+  }
+
+  // ── Drag-to-move between subfolder panels ───────────────────────────────────
+  function startFileDrag(e, subfolder, filename) {
+    dragSrc = { subfolder, filename };
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function moveFile(e, targetSubfolder) {
+    e.preventDefault();
+    e.currentTarget.classList.remove('border-indigo-500');
+    if (!dragSrc || dragSrc.subfolder === targetSubfolder) {
+      dragSrc = null;
+      return;
+    }
+    const { subfolder: fromSub, filename } = dragSrc;
+    dragSrc = null;
+
+    fetch(`/transporter/${TRANSPORTER}/move-file`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: fromSub, to: targetSubfolder, filename })
+    })
+    .then(() => location.reload())
+    .catch(() => location.reload());
+  }
+
+  function deleteFile(transporter, subfolder, filename) {
+    if (!confirm(`Delete ${filename}?`)) return;
+    fetch(`/transporter/${transporter}/file`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subfolder, filename })
+    }).then(r => r.json()).then(d => {
+      if (d.ok) location.reload();
+    });
+  }
+
+  // ── Generation SSE ──────────────────────────────────────────────────────────
+  function startGenerate(name) {
+    const btn  = document.getElementById('generate-btn');
+    const icon = document.getElementById('generate-icon');
+    const lbl  = document.getElementById('generate-label');
+    const logS = document.getElementById('log-section');
+    const logB = document.getElementById('log-box');
+    const vlb  = document.getElementById('view-link-bar');
+
+    btn.disabled = true;
+    icon.textContent = '⏳';
+    lbl.textContent = 'Generating...';
+    logS.classList.remove('hidden');
+    logB.innerHTML = '';
+    vlb.classList.add('hidden');
+
+    const src = new EventSource(`/transporter/${name}/generate`);
+    src.onmessage = (e) => {
+      let data;
+      try { data = JSON.parse(e.data); } catch { data = e.data; }
+      if (data && typeof data === 'object' && data.__done__ !== undefined) {
+        src.close();
+        btn.disabled = false;
+        icon.textContent = '⚡';
+        lbl.textContent = 'Generate UTSF';
+        if (data.exitCode === 0) {
+          vlb.classList.remove('hidden');
+          addLog('Generation complete!', 'text-green-400 font-semibold');
+        } else {
+          addLog('Generation failed — check errors above', 'text-red-400 font-semibold');
+        }
+        return;
+      }
+      const text = typeof data === 'string' ? data : JSON.stringify(data);
+      let cls = 'text-gray-400';
+      // File error block — most prominent
+      if (/\[FILE ERROR\]/i.test(text))         cls = 'text-red-400 font-bold';
+      else if (/^\s*(Reason|Detail|Action)\s*:/i.test(text)) cls = 'text-red-300';
+      // General errors / tracebacks
+      else if (/\[error\]|traceback|failed|✗/i.test(text)) cls = 'text-red-400';
+      // Success lines
+      else if (/\[ok\]|saved:|generated:|passed|✓/i.test(text)) cls = 'text-green-400';
+      // File being parsed — highlight so you know context when errors follow
+      else if (/^\s*parsing:/i.test(text))       cls = 'text-cyan-300';
+      // AI lines
+      else if (/ollama|ai extraction|🤖/i.test(text)) cls = 'text-blue-300';
+      // Warnings
+      else if (/warn|⚠/i.test(text))            cls = 'text-yellow-400';
+      // Section separators
+      else if (/={3,}|-{3,}/i.test(text))        cls = 'text-indigo-400';
+      addLog(text, cls);
+    };
+    src.onerror = () => {
+      src.close();
+      btn.disabled = false;
+      icon.textContent = '⚡';
+      lbl.textContent = 'Generate UTSF';
+    };
+  }
+
+  function addLog(text, cls) {
+    const b = document.getElementById('log-box');
+    const d = document.createElement('div');
+    d.className = 'log-line ' + (cls || 'text-gray-400');
+    d.textContent = text;
+    b.appendChild(d);
+    b.scrollTop = b.scrollHeight;
+  }
+
+  {% if is_generating %}startGenerate(TRANSPORTER);{% endif %}
+</script>
+{% endblock %}

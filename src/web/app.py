@@ -82,6 +82,8 @@ def _check_api_key():
         return  # local mode -- no key configured, allow everything
     if request.method == "OPTIONS":
         return  # let CORS preflight through
+    if request.path == "/api/status":
+        return  # health check endpoint — always public
     if request.headers.get("X-API-Key") != _API_KEY:
         return jsonify({"error": "Unauthorized"}), 401
 

@@ -19,22 +19,9 @@ COPY . .
 
 RUN mkdir -p transporters output
 
-# Build-time smoke test: if this fails the Docker build fails with the
-# actual Python error visible in Railway build logs.
-RUN cd /app/src/web && PYTHONPATH=/app/src python -c \
-    "from app import app; print('[SMOKE TEST OK] Flask app imported cleanly')"
+# Build-time smoke test — import error here fails the build with a visible reason
+RUN PYTHONPATH=/app/src python -c "import sys; sys.path.insert(0, '/app/src'); import os; os.chdir('/app/src/web'); from app import app; print('[SMOKE TEST OK]')"
 
 EXPOSE 8080
 
-# Start with Flask's built-in threaded server.
-# Simpler than gunicorn, identical behaviour, and errors go straight to stdout
-# so Railway logs show the real crash reason.
-CMD python -c "
-import os, sys
-sys.path.insert(0, '/app/src')
-os.chdir('/app/src/web')
-from app import app
-port = int(os.environ.get('PORT', 8080))
-print(f'[START] binding on 0.0.0.0:{port}', flush=True)
-app.run(host='0.0.0.0', port=port, debug=False, threaded=True, use_reloader=False)
-"
+CMD ["python", "/app/start.py"]

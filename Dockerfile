@@ -1,7 +1,5 @@
 FROM python:3.11-slim
 
-# System deps for OCR and image processing.
-# Note: python:3.11-slim is Debian Bookworm — libgl1-mesa-glx was renamed to libgl1.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
@@ -21,16 +19,22 @@ COPY . .
 
 RUN mkdir -p transporters output
 
+# Build-time smoke test: if this fails the Docker build fails with the
+# actual Python error visible in Railway build logs.
+RUN cd /app/src/web && PYTHONPATH=/app/src python -c \
+    "from app import app; print('[SMOKE TEST OK] Flask app imported cleanly')"
+
 EXPOSE 8080
 
-# --chdir tells gunicorn to cd into src/web/ before importing.
-# app.py uses __file__ for path resolution so ROOT_DIR/SRC_DIR still resolve
-# correctly to /app. Do NOT use "src.web.app:app" — src/ has no __init__.py
-# so Python cannot resolve it as a package and gunicorn will crash on import.
-CMD gunicorn app:app \
-    --chdir /app/src/web \
-    --bind "0.0.0.0:${PORT:-8080}" \
-    --threads 4 \
-    --timeout 300 \
-    --worker-class sync \
-    --log-level info
+# Start with Flask's built-in threaded server.
+# Simpler than gunicorn, identical behaviour, and errors go straight to stdout
+# so Railway logs show the real crash reason.
+CMD python -c "
+import os, sys
+sys.path.insert(0, '/app/src')
+os.chdir('/app/src/web')
+from app import app
+port = int(os.environ.get('PORT', 8080))
+print(f'[START] binding on 0.0.0.0:{port}', flush=True)
+app.run(host='0.0.0.0', port=port, debug=False, threaded=True, use_reloader=False)
+"

@@ -933,6 +933,112 @@ def _build_utsf_diff(a: dict, b: dict) -> dict:
     return diff
 
 
+# ─── Routes: Price Extraction ─────────────────────────────────────────────────
+
+@app.post("/api/extract-prices")
+def api_extract_prices():
+    """
+    Extract zone rate matrix from an uploaded price sheet.
+    Accepts any file format: Excel, PDF, image, Word, CSV.
+    Returns: { zoneRates: { originZone: { destZone: rate } }, confidence: 0-100, source: str }
+    Called by the AddVendor zone price matrix step when the user uploads a rate card.
+    """
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in ALLOWED_EXT:
+        return jsonify({"error": f"Unsupported file type: {ext}"}), 400
+
+    import tempfile
+
+    tmp_path = None
+    try:
+        # Save to a temp file so parsers can read it
+        suffix = ext if ext else ".bin"
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+        os.close(fd)
+        f.save(tmp_path)
+
+        # ── Run through our parser stack ──────────────────────────────────────
+        sys.path.insert(0, SRC_DIR)
+
+        zone_rates = {}
+        confidence = 0
+        parse_source = "unknown"
+        text_for_ai = ""
+
+        if ext in (".xlsx", ".xls", ".csv", ".tsv"):
+            # Excel/CSV: ExcelParser._auto_detect() extracts zone matrices directly
+            from parsers.excel_parser import ExcelParser
+            parser = ExcelParser()
+            result = parser.parse(tmp_path)
+            zone_matrix = result.get("data", {}).get("zone_matrix") or {}
+            if zone_matrix:
+                zone_rates = zone_matrix
+                confidence = 80
+            text_for_ai = result.get("text", "")
+            parse_source = "excel"
+
+        elif ext == ".pdf":
+            from parsers.pdf_parser import PDFParser
+            parser = PDFParser()
+            result = parser.parse(tmp_path)
+            text_for_ai = result.get("text", "")
+            parse_source = "pdf"
+
+        elif ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"):
+            from parsers.image_parser import ImageParser
+            parser = ImageParser()
+            result = parser.parse(tmp_path)
+            text_for_ai = result.get("text", "")
+            parse_source = "image_ocr"
+
+        elif ext in (".docx", ".doc"):
+            from parsers.word_parser import WordParser
+            parser = WordParser()
+            result = parser.parse(tmp_path)
+            text_for_ai = result.get("text", "")
+            parse_source = "word"
+
+        else:
+            return jsonify({"error": f"Parser not available for {ext}"}), 422
+
+        # ── AI fallback: use Ollama to extract zone matrix from text ──────────
+        if not zone_rates and text_for_ai:
+            try:
+                from intelligence.ollama_client import OllamaClient
+                client = OllamaClient()
+                if client.is_available():
+                    ai_result = client.extract_zone_matrix(text_for_ai[:6000])
+                    if ai_result and isinstance(ai_result, dict):
+                        zone_rates = ai_result
+                        confidence = 45
+            except Exception as ai_err:
+                print(f"[extract-prices] AI fallback failed: {ai_err}")
+
+        return jsonify({
+            "zoneRates": zone_rates,
+            "confidence": confidence,
+            "source": parse_source,
+            "zonesFound": len(zone_rates),
+            "message": (
+                f"Extracted {len(zone_rates)} origin zones from {parse_source}"
+                if zone_rates else
+                "Could not extract zone rates from this file — try a cleaner Excel rate card"
+            ),
+        })
+
+    except Exception as exc:
+        import traceback
+        print(f"[extract-prices] Error: {exc}\n{traceback.format_exc()}")
+        return jsonify({"error": str(exc), "zoneRates": {}, "confidence": 0}), 500
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
 # ─── Routes: API ──────────────────────────────────────────────────────────────
 
 @app.get("/api/status")

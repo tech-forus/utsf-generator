@@ -159,6 +159,54 @@ ZONE_EXPANSION: Dict[str, List[str]] = {
     "A":            ["N1","N2"],
     "B":            ["S1","S2"],
     "D":            ["W1","W2"],
+    # Numbered zone schemes used by some transporters
+    "1":            ["N1"],
+    "2":            ["N2"],
+    "3":            ["S1"],
+    "4":            ["S2"],
+    "5":            ["E1"],
+    "6":            ["E2"],
+    "7":            ["W1"],
+    "8":            ["W2"],
+    # City-cluster zone names
+    "HYDERABAD":    ["S3"],
+    "HYD":          ["S3"],
+    "PUNE":         ["W1"],
+    "SURAT":        ["W1"],
+    "AHMEDABAD":    ["W1"],
+    "AMD":          ["W1"],
+    "RAJKOT":       ["W1"],
+    "BARODA":       ["W1"],
+    "VADODARA":     ["W1"],
+    "NASHIK":       ["W2"],
+    "NAGPUR":       ["C1"],
+    "RAIPUR":       ["C1"],
+    "BHOPAL":       ["C1"],
+    "INDORE":       ["C1"],
+    "PATNA":        ["E1"],
+    "GUWAHATI":     ["NE1"],
+    "GUWAHATI":     ["NE1"],
+    "NORTH EAST":   ["NE1","NE2"],
+    "NE INDIA":     ["NE1","NE2"],
+    "J AND K":      ["X3"],
+    "JAMMU":        ["X3"],
+    "SRINAGAR":     ["X3"],
+    "KASHMIR":      ["X3"],
+    # Broader regional aliases
+    "SOUTH INDIA":  ["S1","S2","S3","S4"],
+    "NORTH INDIA":  ["N1","N2","N3","N4"],
+    "EAST INDIA":   ["E1","E2"],
+    "WEST INDIA":   ["W1","W2"],
+    "CENTRAL INDIA":["C1","C2"],
+    "PAN INDIA":    ["N1","N2","N3","N4","S1","S2","S3","S4","E1","E2","W1","W2","C1","C2","NE1","NE2"],
+    "ALL INDIA":    ["N1","N2","N3","N4","S1","S2","S3","S4","E1","E2","W1","W2","C1","C2","NE1","NE2"],
+    # Common letter-pair zone labels
+    "AA":           ["N1"],
+    "BB":           ["N2"],
+    "CC":           ["S1"],
+    "DD":           ["S2"],
+    "EE":           ["E1"],
+    "FF":           ["W1"],
 }
 
 # Add every canonical zone mapping to itself
@@ -383,6 +431,78 @@ CHARGE_MAP = {
     "free storage days":        None,   # skip
     "transit time":             None,   # skip
     "delivery days":            None,   # skip
+    # Additional common Indian transporter charge aliases
+    "fuel levy":                "fuel",
+    "fuel cess":                "fuel",
+    "energy surcharge":         "fuel",
+    "diesel levy":              "fuel",
+    "hsd surcharge":            "fuel",
+    "hsd":                      "fuel",
+    "fsc%":                     "fuel",
+    "f.s.c":                    "fuel",
+    "f.s.c.":                   "fuel",
+    "fuel%":                    "fuel",
+    "docket fee charges":       "docketCharges",
+    "lr charges per consignment": "docketCharges",
+    "bilty":                    "docketCharges",
+    "bilty charges":            "docketCharges",
+    "consignment note":         "docketCharges",
+    "oda per consignment":      "odaCharges",
+    "oda/edl":                  "odaCharges",
+    "oda / edl":                "odaCharges",
+    "edl":                      "odaCharges",
+    "out delivery location":    "odaCharges",
+    "extended delivery location": "odaCharges",
+    "special delivery":         "odaCharges",
+    "heavy handling":           "handlingCharges",
+    "heavy lift":               "handlingCharges",
+    "packing":                  "handlingCharges",
+    "unpacking":                "handlingCharges",
+    "c&f":                      "handlingCharges",
+    "loading unloading":        "handlingCharges",
+    "loading & unloading":      "handlingCharges",
+    "labour charges":           "handlingCharges",
+    "transit insurance":        "insuranceCharges",
+    "cargo insurance":          "insuranceCharges",
+    "goods insurance":          "insuranceCharges",
+    "insured value":            "insuranceCharges",
+    "fov%":                     "rovCharges",
+    "risk":                     "rovCharges",
+    "minimum freight charges":  "minCharges",
+    "min freight charges":      "minCharges",
+    "base rate":                "minCharges",
+    "floor rate":               "minCharges",
+    "min rate":                 "minCharges",
+    "min chargeable wt":        "minWeight",
+    "min chg wt":               "minWeight",
+    "chargeable weight":        "minWeight",
+    "divisor factor":           "divisor",
+    "dimensional weight divisor": "divisor",
+    "vol wt divisor":           "divisor",
+    "vol. divisor":             "divisor",
+    "volume divisor":           "divisor",
+    "green cess":               "greenTax",
+    "ecology charge":           "greenTax",
+    "environmental cess":       "greenTax",
+    "gst":                      None,   # skip – tax, not a freight charge
+    "service tax":              None,
+    "igst":                     None,
+    "cgst":                     None,
+    "sgst":                     None,
+    "tds":                      None,
+    "effective date":           None,
+    "valid from":               None,
+    "valid till":               None,
+    "remark":                   None,
+    "remarks":                  None,
+    "note":                     None,
+    "notes":                    None,
+    "saturday delivery":        None,
+    "sunday delivery":          None,
+    "holiday delivery":         None,
+    "sla":                      None,
+    "tat":                      None,
+    "transit":                  None,
 }
 
 COMPANY_MAP = {
@@ -473,7 +593,11 @@ def _safe_float(val) -> Optional[float]:
 
 def _is_valid_pincode(val) -> bool:
     try:
-        pin = int(float(_cell_str(val).replace(",", "")))
+        s = _cell_str(val).replace(",", "").replace(" ", "").replace("-", "")
+        if not s or len(s) != 6:
+            # Also try stripping leading/trailing garbage chars
+            s = re.sub(r'[^\d]', '', s)
+        pin = int(float(s))
         return 100000 <= pin <= 999999
     except (ValueError, TypeError):
         return False
@@ -481,12 +605,38 @@ def _is_valid_pincode(val) -> bool:
 
 def _parse_pincode(val) -> Optional[int]:
     try:
-        pin = int(float(_cell_str(val).replace(",", "")))
+        s = _cell_str(val).replace(",", "").replace(" ", "").replace("-", "")
+        s = re.sub(r'[^\d.]', '', s)
+        if not s:
+            return None
+        pin = int(float(s))
         if 100000 <= pin <= 999999:
             return pin
         return None
     except (ValueError, TypeError):
         return None
+
+
+def _extract_pincodes_from_cell(val) -> List[int]:
+    """Extract one or more pincodes from a cell value.
+    Handles: plain "560001", space-sep "560 001", comma-sep "560001,560002",
+    slash-sep "560001/560002", and inline text "Pincode: 560001".
+    """
+    text = _cell_str(val)
+    if not text:
+        return []
+    # Find all 6-digit sequences (optionally space-separated like "560 001")
+    candidates = re.findall(r'\b(\d\s*\d\s*\d\s*\d\s*\d\s*\d)\b', text)
+    result = []
+    for c in candidates:
+        clean = c.replace(" ", "")
+        try:
+            pin = int(clean)
+            if 100000 <= pin <= 999999:
+                result.append(pin)
+        except ValueError:
+            pass
+    return result
 
 
 def _parse_vf_from_row(row: List, start_col: int = 1) -> Dict:
@@ -608,6 +758,17 @@ class ExcelParser(BaseParser):
                 wb = openpyxl.load_workbook(file_path, data_only=True)
                 for sname in wb.sheetnames:
                     ws = wb[sname]
+                    # Unmerge and forward-fill merged cells so structure is preserved
+                    try:
+                        merge_ranges = list(ws.merged_cells.ranges)
+                        for mr in merge_ranges:
+                            top_val = ws.cell(mr.min_row, mr.min_col).value
+                            ws.unmerge_cells(str(mr))
+                            for r in range(mr.min_row, mr.max_row + 1):
+                                for c in range(mr.min_col, mr.max_col + 1):
+                                    ws.cell(r, c).value = top_val
+                    except Exception:
+                        pass  # merged cell handling is best-effort
                     rows = []
                     for row in ws.iter_rows(values_only=True):
                         r = [_cell_str(c) for c in row]
@@ -674,7 +835,21 @@ class ExcelParser(BaseParser):
         _PARSE_AUDIT = []            # reset for this parse run
         detected: Dict[str, Any] = {}
 
-        for sheet_name, rows in sheets.items():
+        # Sort sheets so high-signal sheets are processed first:
+        # zone/matrix sheets → pincode/serviceability sheets → charge sheets → rest
+        def _sheet_priority(sname_rows):
+            sname = sname_rows[0].lower()
+            if any(kw in sname for kw in ("matrix", "zone", "rate card", "rate_card", "zonal")):
+                return 0
+            if any(kw in sname for kw in ("pincode", "serviceability", "coverage", "served", "network", "area")):
+                return 1
+            if any(kw in sname for kw in ("charge", "tariff", "fee", "price", "pricing", "surcharge", "oda")):
+                return 2
+            return 3
+
+        sorted_sheets = sorted(sheets.items(), key=_sheet_priority)
+
+        for sheet_name, rows in sorted_sheets:
             if not rows:
                 print(f"[Excel:{sheet_name}] Empty sheet — skipping")
                 continue
@@ -848,9 +1023,10 @@ class ExcelParser(BaseParser):
         if len(rows) < 3:
             return None
 
-        scan_limit = min(10, len(rows))
+        scan_limit = min(20, len(rows))
         header_row_idx = None
         header = []
+        origin_col = 0  # which column holds the origin zone label
 
         for ri in range(scan_limit):
             row = rows[ri]
@@ -866,6 +1042,12 @@ class ExcelParser(BaseParser):
         if header_row_idx is None:
             print(f"[Excel:{sheet_name}] No zone matrix header (no row with >= 3 zone tokens)")
             return None
+
+        # If col 0 is a non-zone label (e.g. "Origin\Destination", "From/To") and
+        # col 1 starts a zone run, treat col 1 as the origin label column.
+        if header and not _is_zone_token(header[0]) and len(header) > 1 and _is_zone_token(header[1]):
+            origin_col = 1
+            print(f"[Excel:{sheet_name}] Origin label column detected at col {origin_col}")
 
         # Build column index: col_idx -> list of canonical zones
         # Use SmartMatcher (with ZONE_EXPANSION as fallback) for maximum coverage
@@ -904,7 +1086,11 @@ class ExcelParser(BaseParser):
             if not row:
                 continue
 
-            raw_origin = _upper(row[0]).strip() if row else ""
+            raw_origin = _upper(row[origin_col]).strip() if len(row) > origin_col else ""
+            if not raw_origin:
+                # Try col 0 as fallback if origin_col > 0
+                if origin_col > 0 and row:
+                    raw_origin = _upper(row[0]).strip()
             if not raw_origin:
                 continue
 
@@ -978,7 +1164,7 @@ class ExcelParser(BaseParser):
           - If oda_col or oda_flag_col present:
               ODA=Y / is_oda=Y -> also mark as ODA
         """
-        scan_limit = min(10, len(rows))
+        scan_limit = min(20, len(rows))
         header_row_idx = None
         pin_col = None
         zone_col = None
@@ -989,17 +1175,25 @@ class ExcelParser(BaseParser):
         cod_col = None
         state_col = None
 
+        # Expanded set of pincode header names
+        _PIN_HEADER_EXACT = {
+            "pincode", "pin", "pin code", "postal", "zip", "zip code",
+            "pin no", "pinno", "postal code", "pincodes", "pin codes",
+            "pin_code", "pincode no", "pincode number", "destination pincode",
+            "origin pincode", "src pincode", "dest pincode", "to pincode",
+            "from pincode", "delivery pincode", "service pincode",
+        }
+        _PIN_HEADER_SUBSTR = ("pincode", "postal code", "zip code", "pin code", "pin no")
+
         for ri in range(scan_limit):
             row = rows[ri]
             header_lower = [_cell_str(c).lower().strip() for c in row]
 
-            # Find pincode column
             for ci, h in enumerate(header_lower):
-                if h in ("pincode", "pin", "pin code", "postal", "zip", "zip code",
-                         "pin no", "pinno", "postal code"):
+                if h in _PIN_HEADER_EXACT:
                     pin_col = ci
                     break
-                if any(kw in h for kw in ("pincode", "postal code", "zip code", "pin code")):
+                if any(kw in h for kw in _PIN_HEADER_SUBSTR):
                     pin_col = ci
                     break
 
@@ -1008,7 +1202,6 @@ class ExcelParser(BaseParser):
                 print(f"[Excel:{sheet_name}] Pincode header at row {ri}: "
                       f"pin_col={pin_col} ('{header_lower[pin_col]}')")
 
-                # Scan same header row for other columns
                 for ci, h in enumerate(header_lower):
                     if ci == pin_col:
                         continue
@@ -1018,7 +1211,8 @@ class ExcelParser(BaseParser):
                     elif h in _ODA_FLAG_NAMES or any(n == h for n in _ODA_FLAG_NAMES):
                         oda_flag_col = ci
                         print(f"[Excel:{sheet_name}] ODA-flag col: {ci} ('{h}') — Y=ODA")
-                    elif "oda" in h or "edl" in h or "out of delivery" in h:
+                    elif any(kw in h for kw in ("oda", "edl", "out of delivery", "non serviceable",
+                                                 "non-serviceable", "special area", "remote")):
                         if oda_col is None and oda_flag_col is None:
                             oda_col = ci
                             print(f"[Excel:{sheet_name}] ODA col: {ci} ('{h}')")
@@ -1033,17 +1227,35 @@ class ExcelParser(BaseParser):
                         print(f"[Excel:{sheet_name}] Zone col: {ci} ('{h}')")
                 break
 
-        # Auto-detect by value scan if no named header found
+        # Auto-detect by value scan if no named header found — try columns 0..7
         if header_row_idx is None:
-            valid_count = sum(
-                1 for row in rows[:50] if row and _is_valid_pincode(row[0])
-            )
-            if valid_count >= 10:
-                pin_col = 0
-                header_row_idx = -1
-                print(f"[Excel:{sheet_name}] Auto-detected pincode column 0 "
-                      f"({valid_count}/50 valid in first 50 rows)")
-            else:
+            max_col = max((len(r) for r in rows[:50] if r), default=0)
+            for candidate_col in range(min(8, max_col)):
+                valid_count = sum(
+                    1 for row in rows[:50]
+                    if len(row) > candidate_col and _is_valid_pincode(row[candidate_col])
+                )
+                if valid_count >= 10:
+                    pin_col = candidate_col
+                    header_row_idx = -1
+                    print(f"[Excel:{sheet_name}] Auto-detected pincode column {candidate_col} "
+                          f"({valid_count}/50 valid in first 50 rows)")
+                    break
+
+            if header_row_idx is None:
+                # Last resort: look for comma-separated pincode cells
+                for ri, row in enumerate(rows[:30]):
+                    for ci, cell in enumerate(row):
+                        pins = _extract_pincodes_from_cell(cell)
+                        if len(pins) >= 3:
+                            print(f"[Excel:{sheet_name}] Found multi-pincode cell at row {ri} col {ci}")
+                            # Build a flat pincode list from all cells in this column
+                            all_pins = []
+                            for r in rows[ri:]:
+                                if len(r) > ci:
+                                    all_pins.extend(_extract_pincodes_from_cell(r[ci]))
+                            if len(all_pins) >= 10:
+                                return {"served": list(set(all_pins)), "oda": []}
                 return None
 
         data_start = header_row_idx + 1
@@ -1060,6 +1272,14 @@ class ExcelParser(BaseParser):
         for row in rows[data_start:]:
             if not row or pin_col >= len(row):
                 continue
+
+            # Handle multi-pincode cells (e.g. "110001, 110002, 110003")
+            multi_pins = _extract_pincodes_from_cell(row[pin_col])
+            if len(multi_pins) > 1:
+                for mp in multi_pins:
+                    served.append(mp)
+                continue
+
             pin = _parse_pincode(row[pin_col])
             if pin is None:
                 skipped += 1
@@ -1164,6 +1384,11 @@ class ExcelParser(BaseParser):
                 charges["odaCharges"] = oda_bands
                 print(f"[Excel:{sheet_name}]   ODA weight bands: "
                       f"{len(oda_bands.get('bands', []))} weight bands")
+
+        # Weight-slab pricing table (zone-wise rates per weight band)
+        weight_slab = self._try_parse_weight_slab(rows, sheet_name)
+        if weight_slab:
+            charges["weightSlabRates"] = weight_slab
 
         # Second pass: key-value rows (+ single-cell inline text)
         for ri, row in enumerate(rows):
@@ -1543,6 +1768,149 @@ class ExcelParser(BaseParser):
     # ------------------------------------------------------------------
     # Company info parser
     # ------------------------------------------------------------------
+
+    def _try_parse_weight_slab(
+        self, rows: List[List], sheet_name: str
+    ) -> Optional[Dict]:
+        """
+        Detect general weight-slab pricing tables used by many transporters:
+
+          Weight Slab  | Zone A | Zone B | Zone C | ...
+          0 - 10 kg    | 100    | 120    | 150    | ...
+          11 - 50 kg   | 200    | 250    | 300    | ...
+          51 - 100 kg  | 400    | 500    | 600    | ...
+          per kg above | 8      | 10     | 12     | ...
+
+        Also handles single-zone "per kg" tables:
+          Up to 500 kg | 12/kg
+          500+ kg      | 10/kg
+
+        Returns {"type": "weight_slab", "slabs": [...], "zones": [...]} or None.
+        """
+        _WEIGHT_KW = re.compile(
+            r'(?i)(weight|wt\.?|slab|kg|kgs|upto|up\s+to|above|below|from|to|per\s+kg|'
+            r'\d+\s*[-–]\s*\d+\s*kg|\d+\s*kg|\d+\s*\+)',
+            re.IGNORECASE
+        )
+
+        # Locate a header row that has weight-slab keywords AND zone tokens
+        header_row_idx = None
+        zone_cols: Dict[int, str] = {}   # col_idx → raw zone label
+        weight_col = None
+
+        scan_limit = min(20, len(rows))
+        for ri in range(scan_limit):
+            row = rows[ri]
+            cells = [_upper(c) for c in row]
+            # Does this row look like a weight-slab header?
+            # Criterion: first non-empty cell contains weight keyword,
+            # and remaining cells contain zone tokens or are numeric headers
+            if not cells:
+                continue
+            first = _cell_str(row[0]).lower().strip()
+            if not (_WEIGHT_KW.search(first) or any(_WEIGHT_KW.search(_cell_str(c)) for c in row[:3])):
+                continue
+
+            # Check if other columns are zone tokens or at least numeric
+            found_zones = {}
+            for ci in range(1, len(cells)):
+                h = cells[ci].strip()
+                if not h:
+                    continue
+                if _is_zone_token(h):
+                    found_zones[ci] = h
+                elif re.match(r'^[A-Z]{1,3}\d{0,2}$', h):
+                    found_zones[ci] = h
+
+            if len(found_zones) >= 2:
+                header_row_idx = ri
+                weight_col = 0
+                zone_cols = found_zones
+                print(f"[Excel:{sheet_name}] Weight-slab header at row {ri}: "
+                      f"weight_col=0, zone_cols={zone_cols}")
+                break
+
+            # Alternatively: weight keyword in a column, numeric zone cols
+            for ci, cell in enumerate(row):
+                if _WEIGHT_KW.search(_cell_str(cell)) and ci > 0:
+                    # Try treating ci as weight col
+                    remaining = {
+                        c: cells[c] for c in range(ci + 1, len(cells))
+                        if cells[c].strip() and _is_zone_token(cells[c].strip())
+                    }
+                    if len(remaining) >= 2:
+                        header_row_idx = ri
+                        weight_col = ci
+                        zone_cols = remaining
+                        break
+            if header_row_idx is not None:
+                break
+
+        if header_row_idx is None or weight_col is None or len(zone_cols) < 2:
+            return None
+
+        # Parse data rows
+        slabs = []
+        for row in rows[header_row_idx + 1:]:
+            if not row or weight_col >= len(row):
+                continue
+            wt_raw = _cell_str(row[weight_col]).strip()
+            if not wt_raw:
+                continue
+
+            wt_lower = wt_raw.lower()
+            nums = re.findall(r'\d+(?:\.\d+)?', wt_raw)
+            if not nums:
+                continue
+
+            # Parse weight range
+            per_kg = False
+            if "per kg" in wt_lower or "per/kg" in wt_lower or "/kg" in wt_lower:
+                per_kg = True
+
+            if "above" in wt_lower or "+" in wt_raw or ">" in wt_raw or "over" in wt_lower:
+                min_wt = float(nums[0])
+                max_wt = None
+            elif "up to" in wt_lower or "upto" in wt_lower or len(nums) == 1:
+                min_wt = 0.0
+                max_wt = float(nums[0])
+            elif len(nums) >= 2:
+                min_wt = float(nums[0])
+                max_wt = float(nums[1])
+            else:
+                min_wt = float(nums[0])
+                max_wt = None
+
+            zone_rates: Dict[str, float] = {}
+            for ci, zone_label in zone_cols.items():
+                if ci >= len(row):
+                    continue
+                rate = _safe_float(row[ci])
+                if rate is not None:
+                    # Expand zone label to canonical zones
+                    canonical = ZONE_EXPANSION.get(zone_label, [zone_label])
+                    for z in canonical:
+                        zone_rates[z] = rate
+
+            if zone_rates:
+                slab: Dict[str, Any] = {
+                    "minWt": min_wt,
+                    "rates": zone_rates,
+                    "perKg": per_kg,
+                }
+                if max_wt is not None:
+                    slab["maxWt"] = max_wt
+                slabs.append(slab)
+
+        if len(slabs) >= 2:
+            print(f"[Excel:{sheet_name}] Weight-slab table: {len(slabs)} slabs, "
+                  f"zones={list(list(slabs[0]['rates'].keys())[:5])}")
+            return {
+                "type": "weight_slab",
+                "slabs": slabs,
+                "zones": sorted(set(z for s in slabs for z in s["rates"])),
+            }
+        return None
 
     def _try_parse_company_info(
         self, rows: List[List], sheet_name: str

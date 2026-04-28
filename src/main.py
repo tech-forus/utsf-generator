@@ -590,6 +590,30 @@ def generate_utsf_for_transporter(
         utsf["_parseAudit"] = parse_audit
         print(f"\n  Parse audit: {len(parse_audit)} uncertain match(es) recorded for review")
 
+    # ── Auto-learning: passively confirm parse audit entries that produced
+    #    real data in the final UTSF (method = "fuzzy" / "token" / "geo").
+    #    This teaches the dictionary without any user clicking.
+    quality = utsf.get("dataQuality", 0)
+    if quality >= 40 and parse_audit:
+        try:
+            from knowledge.ml_dictionary_engine import record_passive_confirmation
+            confirmed = 0
+            for entry in parse_audit:
+                method = entry.get("method", "")
+                if method in ("fuzzy", "token", "geo", "substring", "normalised"):
+                    record_passive_confirmation(
+                        learn_type  = entry.get("type", "charge"),
+                        raw         = entry.get("raw", ""),
+                        canonical   = entry.get("matched"),
+                        confidence  = entry.get("confidence", 0.0),
+                    )
+                    confirmed += 1
+            if confirmed:
+                print(f"  Auto-learning: passively confirmed {confirmed} "
+                      f"uncertain match(es) (quality={quality:.0f})")
+        except Exception as _learn_err:
+            print(f"  Auto-learning skipped: {_learn_err}")
+
     # ------------------------------------------------------------------
     # 5. Log serviceability and ODA results
     # ------------------------------------------------------------------

@@ -184,6 +184,55 @@ def record_correction(learn_type: str, raw: str, wrong_canonical, correct_canoni
     return {"written": True, "correct_canonical": correct_canonical}
 
 
+def record_passive_confirmation(
+    learn_type: str, raw: str, canonical, confidence: float = 0.65
+) -> None:
+    """
+    Auto-confirm a match that was used successfully in a parse — no user click needed.
+    Uses a lower weight than explicit user confirmation so it can't override a
+    user correction, but accumulates over many successful parses.
+
+    Called internally by parsers after a successful extraction.
+    """
+    if confidence < 0.65:
+        return   # too uncertain to auto-learn from
+
+    data = _load_data()
+    key  = _entry_key(learn_type, raw, canonical)
+    now  = time.time()
+
+    entry = data["entries"].get(key)
+    if entry is None:
+        entry = {
+            "type":          learn_type,
+            "raw":           raw,
+            "canonical":     canonical,
+            "confirmations": 0,
+            "corrections":   0,
+            "confidence":    0.4,      # start lower than user-confirmed
+            "auto_promoted": False,
+            "passive":       True,
+            "first_seen":    now,
+            "last_seen":     now,
+        }
+
+    # Passive confirmation grows confidence more slowly than user confirmation
+    entry["confirmations"] += 0.5     # half-weight vs explicit user click
+    entry["confidence"]     = min(0.95, entry["confidence"] + (1.0 - entry["confidence"]) * 0.15)
+    entry["last_seen"]      = now
+    data["entries"][key]    = entry
+
+    # Auto-promote after more passive confirmations (threshold × 2)
+    if (entry["confirmations"] >= AUTO_PROMOTE_THRESHOLD * 2
+            and not entry.get("auto_promoted")
+            and entry["confidence"] >= 0.80):
+        _write_to_learned_dict(learn_type, raw, canonical)
+        entry["auto_promoted"] = True
+        data["stats"]["auto_promoted"] = data["stats"].get("auto_promoted", 0) + 1
+
+    _save_data(data)
+
+
 def get_suggestion(learn_type: str, raw: str) -> Optional[Tuple]:
     """
     Look up the best known canonical for a raw label.

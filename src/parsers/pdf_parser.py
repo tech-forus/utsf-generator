@@ -400,50 +400,52 @@ class PDFParser(BaseParser):
             print(f"[PDFParser] OICR pass failed: {_oicr_err}")
 
         # ── Table extraction ─────────────────────────────────────────────────
+        # IMPORTANT: always run ALL extractors on every table (same as old code).
+        # ContentClassifier is used only for logging — never as a gate.
         for ti, table in enumerate(tables):
             if not table:
                 continue
 
-            # Classify this individual table
+            # Classify for logging/debugging only — does NOT gate extractors
             try:
                 tc = cc.classify_rows(table) if 'cc' in dir() else {"category": "UNKNOWN"}
                 table_cat = tc.get("category", "UNKNOWN")
+                print(f"[PDFParser] Table {ti}: classifier={table_cat} "
+                      f"(conf={tc.get('confidence', 0):.2f})")
             except Exception:
                 table_cat = "UNKNOWN"
 
-            # Zone matrix
-            if not data.get("zone_matrix") or table_cat == "ZONE_MATRIX":
+            # Zone matrix — always try if not yet found
+            if not data.get("zone_matrix"):
                 zm = ep._try_parse_zone_matrix(table, f"PDF_Table_{ti}")
                 if zm and len(zm) > len(data.get("zone_matrix") or {}):
                     data["zone_matrix"] = zm
                     print(f"[PDFParser] Table {ti}: zone matrix {len(zm)} origins")
 
-            # Charges
-            if table_cat in ("CHARGES", "MIXED", "UNKNOWN"):
-                ch = ep._try_parse_charges(table, f"PDF_Table_{ti}")
-                if ch:
-                    data.setdefault("charges", {})
-                    for k, v in ch.items():
-                        data["charges"].setdefault(k, v)
+            # Charges — always try on every table
+            ch = ep._try_parse_charges(table, f"PDF_Table_{ti}")
+            if ch:
+                data.setdefault("charges", {})
+                for k, v in ch.items():
+                    data["charges"].setdefault(k, v)
 
-            # Pincode list
-            if table_cat in ("PINCODE_LIST", "ODA_LIST", "MIXED", "UNKNOWN"):
-                pinlist = ep._try_parse_pincode_list(table, f"PDF_Table_{ti}")
-                if pinlist:
+            # Pincode list — always try on every table
+            pinlist = ep._try_parse_pincode_list(table, f"PDF_Table_{ti}")
+            if pinlist:
+                data.setdefault("served_pincodes", [])
+                data.setdefault("oda_pincodes",    [])
+                data["served_pincodes"].extend(pinlist.get("served", []))
+                data["oda_pincodes"].extend(pinlist.get("oda", []))
+                if pinlist.get("zone_pincodes"):
+                    data.setdefault("zone_pincodes", {})
+                    for z, pins in pinlist["zone_pincodes"].items():
+                        data["zone_pincodes"].setdefault(z, []).extend(pins)
+            else:
+                # Raw pincode sweep on every table (old behaviour)
+                pins = self._extract_pincodes_from_table(table)
+                if pins:
                     data.setdefault("served_pincodes", [])
-                    data.setdefault("oda_pincodes",    [])
-                    data["served_pincodes"].extend(pinlist.get("served", []))
-                    data["oda_pincodes"].extend(pinlist.get("oda", []))
-                    if pinlist.get("zone_pincodes"):
-                        data.setdefault("zone_pincodes", {})
-                        for z, pins in pinlist["zone_pincodes"].items():
-                            data["zone_pincodes"].setdefault(z, []).extend(pins)
-                else:
-                    # Raw pincode extraction from table cells
-                    pins = self._extract_pincodes_from_table(table)
-                    if pins:
-                        data.setdefault("served_pincodes", [])
-                        data["served_pincodes"].extend(pins)
+                    data["served_pincodes"].extend(pins)
 
         # ── Text-level extraction ────────────────────────────────────────────
         if text:

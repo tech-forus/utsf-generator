@@ -159,15 +159,18 @@ ZONE_EXPANSION: Dict[str, List[str]] = {
     "A":            ["N1","N2"],
     "B":            ["S1","S2"],
     "D":            ["W1","W2"],
-    # Numbered zone schemes used by some transporters
-    "1":            ["N1"],
-    "2":            ["N2"],
-    "3":            ["S1"],
-    "4":            ["S2"],
-    "5":            ["E1"],
-    "6":            ["E2"],
-    "7":            ["W1"],
-    "8":            ["W2"],
+    # Numbered zone schemes (only used in header detection, never as rate values)
+    # NOTE: These are intentionally NOT in the token-match set to avoid misidentifying
+    # rate values (like 5, 8, 10) as zone names in data rows. They are only used
+    # in col_canonical header mapping where context is unambiguous.
+    "ZONE1":        ["N1"],
+    "ZONE2":        ["N2"],
+    "ZONE3":        ["S1"],
+    "ZONE4":        ["S2"],
+    "ZONE5":        ["E1"],
+    "ZONE6":        ["E2"],
+    "ZONE7":        ["W1"],
+    "ZONE8":        ["W2"],
     # City-cluster zone names
     "HYDERABAD":    ["S3"],
     "HYD":          ["S3"],
@@ -554,6 +557,10 @@ def _upper(val) -> str:
 
 def _is_zone_token(token: str) -> bool:
     t = token.upper().strip()
+    # Reject bare numbers — rate values like 5, 10, 22 should NEVER be zone tokens.
+    # This prevents misidentifying rate values in data rows as zone origin labels.
+    if re.match(r'^\d+(\.\d+)?$', t):
+        return False
     if t in ZONE_TOKENS:
         return True
     # Try normalising hyphens/underscores: "Zone-1" → "ZONE 1", "Zone_A" → "ZONE A"
@@ -1043,11 +1050,33 @@ class ExcelParser(BaseParser):
             print(f"[Excel:{sheet_name}] No zone matrix header (no row with >= 3 zone tokens)")
             return None
 
-        # If col 0 is a non-zone label (e.g. "Origin\Destination", "From/To") and
-        # col 1 starts a zone run, treat col 1 as the origin label column.
+        # ── Determine origin column ────────────────────────────────────────────
+        # When header[0] is a label (e.g. "From/To", "Origin\Dest") and header[1]
+        # is a zone token, origin_col MIGHT be 1 (if data rows have blank col 0
+        # and origin label in col 1) OR 0 (if origin labels are in col 0 of data rows).
+        #
+        # CRITICAL: Always verify by peeking at actual data rows before committing.
+        # Getting this wrong shifts ALL rates by one column, producing wrong cross-zone rates.
         if header and not _is_zone_token(header[0]) and len(header) > 1 and _is_zone_token(header[1]):
-            origin_col = 1
-            print(f"[Excel:{sheet_name}] Origin label column detected at col {origin_col}")
+            # Peek at first 6 data rows and count zone tokens in col 0 vs col 1
+            data_sample = rows[header_row_idx + 1:header_row_idx + 7]
+            col0_zone_hits = sum(
+                1 for r in data_sample
+                if r and _is_zone_token(_cell_str(r[0]))
+            )
+            col1_zone_hits = sum(
+                1 for r in data_sample
+                if len(r) > 1 and _is_zone_token(_cell_str(r[1]))
+            )
+            if col0_zone_hits > col1_zone_hits:
+                # Origin labels are in col 0 (most common: "From/To | N | W | E | S")
+                origin_col = 0
+                print(f"[Excel:{sheet_name}] origin_col=0 (data rows have zone tokens in col 0: "
+                      f"{col0_zone_hits} vs col 1: {col1_zone_hits})")
+            else:
+                origin_col = 1
+                print(f"[Excel:{sheet_name}] origin_col=1 confirmed (col 1 has {col1_zone_hits} "
+                      f"zone tokens vs col 0: {col0_zone_hits})")
 
         # Build column index: col_idx -> list of canonical zones
         # Use SmartMatcher (with ZONE_EXPANSION as fallback) for maximum coverage
@@ -1087,10 +1116,13 @@ class ExcelParser(BaseParser):
                 continue
 
             raw_origin = _upper(row[origin_col]).strip() if len(row) > origin_col else ""
-            if not raw_origin:
-                # Try col 0 as fallback if origin_col > 0
-                if origin_col > 0 and row:
-                    raw_origin = _upper(row[0]).strip()
+            # If origin_col > 0 and the cell is not a zone token, always try col 0
+            # (this handles both the "blank col 0" layout AND the "label col 0" layout
+            # where origin_col was tentatively set to 1 but data has origins in col 0)
+            if origin_col > 0 and (not raw_origin or not _is_zone_token(raw_origin)):
+                col0_val = _upper(row[0]).strip() if row else ""
+                if col0_val and _is_zone_token(col0_val):
+                    raw_origin = col0_val
             if not raw_origin:
                 continue
 

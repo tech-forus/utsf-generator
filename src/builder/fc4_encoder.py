@@ -359,8 +359,56 @@ class FC4Encoder:
             for orig, dests in sample:
                 print(f"[Encoder._encode_pricing]   zoneRates[{orig}]: "
                       f"{len(dests)} dest zones  sample={dict(list(dests.items())[:4])}")
+            # Sanity check: detect "collapsed" matrices where cross-zone rates
+            # are suspiciously equal to same-zone rates (sign of column alignment bug)
+            self._validate_zone_matrix(normalized_zr)
         else:
             print(f"[Encoder._encode_pricing]   zoneRates: (empty)")
+
+    def _validate_zone_matrix(self, zr: Dict):
+        """
+        Detect common zone matrix parsing errors:
+        - Collapsed cross-zone rates (all origins have same rate to a destination)
+        - Rate = 0 for all cross-zone pairs (missing data)
+        - Cross-zone rate == same-zone rate (column misalignment sign)
+
+        Logs warnings; does NOT modify the matrix.
+        """
+        all_zones = sorted(zr.keys())
+        if len(all_zones) < 2:
+            return
+
+        collapsed_dests = []
+        for dest in set(d for dests in zr.values() for d in dests):
+            rates = [zr[o].get(dest) for o in all_zones if dest in zr.get(o, {})]
+            rates = [r for r in rates if r is not None and r > 0]
+            if len(rates) >= 3 and len(set(rates)) == 1:
+                collapsed_dests.append((dest, rates[0]))
+
+        if collapsed_dests:
+            print(f"[Encoder] WARNING: Zone matrix may have collapsed rates "
+                  f"(all origins have same rate to destination):")
+            for dest, rate in collapsed_dests[:5]:
+                print(f"[Encoder]   → {dest}: all origins = {rate} (possible column misalignment)")
+
+        # Check if any origin has cross-zone == same-zone rates
+        misaligned = []
+        for orig in all_zones:
+            same_zone_rate = zr[orig].get(orig)
+            if same_zone_rate is None:
+                continue
+            cross_zone_matches = [
+                dest for dest, rate in zr[orig].items()
+                if dest != orig and rate == same_zone_rate
+            ]
+            if len(cross_zone_matches) >= 2:
+                misaligned.append((orig, same_zone_rate, cross_zone_matches[:3]))
+
+        if misaligned:
+            print(f"[Encoder] WARNING: Multiple cross-zone rates equal same-zone rate "
+                  f"(possible origin_col misalignment):")
+            for orig, rate, matches in misaligned[:3]:
+                print(f"[Encoder]   {orig}→{orig}={rate} same as {orig}→{matches}")
 
     def _encode_vf_charge(self, val, label: str = "") -> Dict:
         """

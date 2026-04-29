@@ -1039,6 +1039,158 @@ def api_extract_prices():
             os.remove(tmp_path)
 
 
+# ─── Routes: Bulk Generate (synchronous, frontend-friendly) ──────────────────
+
+@app.post("/api/generate-bulk")
+def api_generate_bulk():
+    """
+    Accept multiple files + a transporter name, run the full generation pipeline,
+    and return the UTSF JSON directly (no SSE, no polling needed).
+
+    Multipart fields:
+      name        (required) transporter name / slug
+      files[]     one or more files (any supported format)
+      subfolder   (optional) override classification for ALL files
+
+    Response:
+      { ok: true, utsf: {...}, quality: 0-100, stats: {...} }
+    or
+      { ok: false, error: "..." }
+
+    Used by AddVendor "generate from files" inline flow when a quick
+    synchronous result is preferred over the SSE streaming approach.
+    """
+    import shutil
+
+    name = (request.form.get("name") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "error": "name is required"}), 400
+
+    safe = _safe_name(name)
+    override_subfolder = request.form.get("subfolder")
+
+    # Prepare a temp transporter folder so we don't pollute the main store
+    tmp_folder = os.path.join(TRANSPORTERS, f"_tmp_{safe}_{os.getpid()}")
+    try:
+        for sub in SUBFOLDERS:
+            os.makedirs(os.path.join(tmp_folder, sub), exist_ok=True)
+
+        # Save uploaded files into appropriate subfolders
+        saved = []
+        for f in request.files.getlist("files"):
+            if not f.filename or not allowed_file(f.filename):
+                continue
+            filename = secure_filename(f.filename)
+            subfolder = override_subfolder if (override_subfolder and override_subfolder in SUBFOLDERS) \
+                        else auto_classify_file(f.filename)
+            dest = os.path.join(tmp_folder, subfolder, filename)
+            f.save(dest)
+            saved.append({"name": filename, "subfolder": subfolder})
+
+        if not saved:
+            return jsonify({"ok": False, "error": "No valid files uploaded"}), 400
+
+        # Run the full generation pipeline
+        sys.path.insert(0, SRC_DIR)
+        import io as _io
+        import queue as _queue
+        import threading as _threading
+
+        # Temporarily override the TRANSPORTERS_DIR inside main.py
+        import main as _main_mod
+        original_transporters = _main_mod.TRANSPORTERS_DIR
+        original_output = _main_mod.OUTPUT_DIR
+
+        tmp_output = os.path.join(TRANSPORTERS, f"_tmp_out_{safe}_{os.getpid()}")
+        os.makedirs(tmp_output, exist_ok=True)
+
+        try:
+            # Point main.py at our temp folders
+            tmp_transporter_name = os.path.basename(tmp_folder)
+            _main_mod.TRANSPORTERS_DIR = TRANSPORTERS
+            _main_mod.OUTPUT_DIR = tmp_output
+
+            output_path = _main_mod.generate_utsf_for_transporter(
+                tmp_transporter_name, use_ai=False
+            )
+
+            if not output_path or not os.path.exists(output_path):
+                return jsonify({"ok": False, "error": "Generation produced no output"}), 500
+
+            with open(output_path, "r", encoding="utf-8") as fp:
+                utsf = json.load(fp)
+
+            quality = utsf.get("dataQuality", 0)
+            stats   = utsf.get("stats", {})
+            return jsonify({
+                "ok":       True,
+                "utsf":     utsf,
+                "quality":  quality,
+                "stats":    stats,
+                "files":    saved,
+                "message":  f"Generated UTSF with quality {quality:.0f}/100",
+            })
+
+        finally:
+            _main_mod.TRANSPORTERS_DIR = original_transporters
+            _main_mod.OUTPUT_DIR = original_output
+            # Clean up temp output
+            try:
+                shutil.rmtree(tmp_output, ignore_errors=True)
+            except Exception:
+                pass
+
+    except Exception as exc:
+        import traceback
+        print(f"[generate-bulk] Error: {exc}\n{traceback.format_exc()}")
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    finally:
+        # Always clean up temp transporter folder
+        try:
+            shutil.rmtree(tmp_folder, ignore_errors=True)
+        except Exception:
+            pass
+
+
+@app.post("/api/classify-files")
+def api_classify_files():
+    """
+    Given filenames (not actual file content), return auto-classification predictions.
+    Used by the frontend drag-and-drop UI to show category badges before upload.
+
+    Body: { "files": ["rate_card.xlsx", "pincode_list.xlsx", "company.pdf"] }
+    Response: { "classifications": [{ "name": ..., "category": ..., "confidence": ... }] }
+    """
+    data = request.get_json() or {}
+    filenames = data.get("files", [])
+    if not isinstance(filenames, list):
+        return jsonify({"ok": False, "error": "files must be a list"}), 400
+
+    results = []
+    for fname in filenames[:50]:  # cap at 50
+        category = auto_classify_file(fname)
+        # Compute a rough confidence from score
+        name_lower = os.path.splitext(str(fname))[0].lower()
+        name_clean = name_lower.replace("_", " ").replace("-", " ").replace(".", " ")
+        scores = {sub: 0 for sub in SUBFOLDERS}
+        for sub, keywords in SORT_KEYWORDS.items():
+            for kw in keywords:
+                if kw in name_clean:
+                    scores[sub] += 2
+        best_score = max(scores.values())
+        confidence = min(95, 40 + best_score * 10) if best_score > 0 else 40
+
+        results.append({
+            "name":       fname,
+            "category":   category,
+            "confidence": confidence,
+            "hint":       SUBFOLDER_HINTS.get(category, ""),
+            "icon":       SUBFOLDER_ICONS.get(category, "📄"),
+        })
+
+    return jsonify({"ok": True, "classifications": results})
+
+
 # ─── Routes: API ──────────────────────────────────────────────────────────────
 
 @app.get("/api/status")

@@ -357,6 +357,26 @@ class OICREngine:
         if header_idx is None or pin_col is None:
             return None
 
+        # ── Better rate column selection ──────────────────────────────────────
+        # TCI Excels often have multiple rate columns: "Out Card", "Express Rate",
+        # "To Pay", etc. We want the BASE freight rate, not the all-in or express rate.
+        # Score columns by preference: out card / base > freight > surface > generic > express / topay
+        if rate_col is not None:
+            best_rc, best_score = rate_col, 0
+            for ri, row in enumerate(rows[:header_idx + 1]):
+                h = [str(c).lower().strip() for c in row]
+                for ci, cell in enumerate(h):
+                    s = 0
+                    if "out card" in cell or "out_card" in cell:    s = 6
+                    elif "base" in cell and "rate" in cell:         s = 5
+                    elif "freight" in cell and "rate" in cell:      s = 4
+                    elif "surface" in cell:                         s = 3
+                    elif "rate" in cell and "express" not in cell and "topay" not in cell and "to pay" not in cell: s = 2
+                    elif "rate" in cell:                            s = 1
+                    if s > best_score:
+                        best_score, best_rc = s, ci
+            rate_col = best_rc
+
         data_rows = rows[header_idx + 1:]
 
         # Determine origin station/zone
@@ -376,7 +396,7 @@ class OICREngine:
         origin_zone = STATION_ZONE_MAP.get(origin_station)
         if not origin_zone:
             inferred = city_to_zones(origin_station)
-            origin_zone = inferred[0] if inferred else "E1"
+            origin_zone = inferred[0] if inferred else "N1"
 
         print(f"[OICR] Station-rate rows ({sheet_name}): origin={origin_station}->{origin_zone}")
 
@@ -404,7 +424,7 @@ class OICREngine:
                     rate_str = str(row[rate_col]).strip().replace(",", "")
                     if rate_str and rate_str.lower() not in ("", "nan", "none"):
                         rate = float(rate_str)
-                        if 1.0 <= rate <= 200.0:
+                        if 0.5 <= rate <= 150.0:   # base freight per kg; reject outliers
                             zone_rate_samples[dest_zone].append(rate)
             except (ValueError, TypeError):
                 continue
@@ -416,9 +436,20 @@ class OICREngine:
             print(f"[OICR] Station-rate: only pincodes ({len(served_pincodes)}) — no rates")
             return {"served_pincodes": list(set(served_pincodes))}
 
-        # Average rates per destination zone
+        # ── Trimmed mean per destination zone ────────────────────────────────
+        # Simple average lets a single high-rate remote station (Leh, Andaman)
+        # drag the zone average up. Trimmed mean removes top/bottom 15% first.
+        def _trimmed_mean(vals: list) -> float:
+            s = sorted(vals)
+            n = len(s)
+            if n <= 2:
+                return round(sum(s) / n, 2)
+            cut = max(1, int(n * 0.15))
+            trimmed = s[cut: n - cut] if n > 2 * cut else s
+            return round(sum(trimmed) / len(trimmed), 2)
+
         origin_rates: Dict[str, float] = {
-            dz: round(sum(rates) / len(rates), 2)
+            dz: _trimmed_mean(rates)
             for dz, rates in zone_rate_samples.items()
         }
 
@@ -522,10 +553,19 @@ class OICREngine:
             print(f"[OICR] Station-rate: no zone rates extracted (pincodes={len(served_pincodes)})")
             return {"served_pincodes": served_pincodes} if served_pincodes else None
 
-        # Average rates per destination zone (from origin_zone)
-        origin_rates: Dict[str, float] = {}
-        for dest_zone, rates in zone_rate_samples.items():
-            origin_rates[dest_zone] = round(sum(rates) / len(rates), 2)
+        # ── Trimmed mean per destination zone (DataFrame variant) ───────────────
+        def _tmean(vals: list) -> float:
+            s = sorted(vals)
+            n = len(s)
+            if n <= 2:
+                return round(sum(s) / n, 2)
+            cut = max(1, int(n * 0.15))
+            trimmed = s[cut: n - cut] if n > 2 * cut else s
+            return round(sum(trimmed) / len(trimmed), 2)
+
+        origin_rates: Dict[str, float] = {
+            dz: _tmean(rates) for dz, rates in zone_rate_samples.items()
+        }
 
         print(f"[OICR] Station-rate: {origin_zone} -> {len(origin_rates)} zones: "
               f"{sorted(origin_rates.items())}")
@@ -857,20 +897,43 @@ class OICREngine:
         """
         Build a full N×N zone matrix from a single origin's rates.
 
-        Uses the principle: rate(A->B) ≈ rate(origin->B) * dist(origin->A) / dist(origin->A_ref)
-        where A_ref is the zone closest to A for which we have data.
+        Uses: rate(A→B) ≈ rate(Origin→B) × f(dist(A,B) / dist(Origin,B))
 
-        This is conservative: we only interpolate, never extrapolate beyond data range.
+        Dampening: f(r) = 0.65 + 0.35 × r  (real freight scales sub-linearly)
+        Caps:
+          • Per-cell floor: same-zone rate (can't be cheaper than local)
+          • Per-cell ceiling: 2.5× origin rate (prevents runaway extrapolation)
+
+        Sanity: if the minimum input rate > 25 Rs/kg, it's likely an all-in/effective
+        rate with surcharges already baked in.  Log a warning — callers should not add
+        fuel/docket on top of an already-effective rate.
         """
         if not origin_rates or origin_zone not in ZONE_COORDS:
             return {origin_zone: origin_rates} if origin_rates else {}
 
+        # ── Sanity check: detect effective-pricing (charges baked in) ─────────
+        regular_rates = [r for z, r in origin_rates.items() if not z.startswith('X') and r > 0]
+        if regular_rates:
+            min_base = min(regular_rates)
+            if min_base > 25.0:
+                print(f"[OICR] WARNING: Minimum zone rate {min_base:.2f} Rs/kg looks like an "
+                      f"all-in/effective rate (charges already baked in). "
+                      f"Store the BASE freight rate — fuel, docket, GST should be separate fields.")
+            elif min_base > 15.0:
+                print(f"[OICR] NOTE: Zone rates appear high (min={min_base:.2f}). "
+                      f"Verify these are base per-kg rates, not all-in rates.")
+
         full = {}
 
-        # Base rates from origin to all zones (fill gaps via distance)
+        # Fill any missing destination zones using distance interpolation
         origin_to_all = self._fill_zone_gaps(origin_zone, origin_rates)
 
-        # Build rates for each other origin zone
+        # Global rate bounds for capping
+        all_vals    = [r for r in origin_to_all.values() if r > 0]
+        global_max  = max(all_vals) if all_vals else 100.0
+        global_min  = min(all_vals) if all_vals else 1.0
+
+        # Build rates for every possible origin zone
         for from_z in ALL_ZONES:
             if from_z == origin_zone:
                 full[from_z] = dict(origin_to_all)
@@ -879,26 +942,28 @@ class OICREngine:
             if from_z not in ZONE_COORDS:
                 continue
 
-            # Distance ratio: from_z relative to known origin
-            dist_orig_from = _haversine(ZONE_COORDS[origin_zone], ZONE_COORDS[from_z])
-
             from_z_rates: Dict[str, float] = {}
             for to_z, base_rate in origin_to_all.items():
                 if to_z not in ZONE_COORDS:
                     continue
 
                 dist_orig_to = _haversine(ZONE_COORDS[origin_zone], ZONE_COORDS[to_z])
-                dist_from_to = _haversine(ZONE_COORDS[from_z], ZONE_COORDS[to_z])
+                dist_from_to = _haversine(ZONE_COORDS[from_z],      ZONE_COORDS[to_z])
 
-                if dist_orig_to < 1:
-                    # Same zone -> same as local rate
+                if dist_orig_to < 1.0:
+                    # Essentially the same zone — keep base rate
                     from_z_rates[to_z] = round(base_rate, 2)
                 else:
-                    # Scale by distance ratio
-                    ratio = dist_from_to / dist_orig_to
-                    # Dampened ratio: real rates don't scale linearly with distance
-                    dampened = 0.6 + 0.4 * ratio  # min 60% of origin rate
-                    from_z_rates[to_z] = round(base_rate * dampened, 2)
+                    ratio    = dist_from_to / dist_orig_to
+                    # Dampened ratio: 0.65 base + 0.35 × distance ratio
+                    # Capped between 0.5× and 2.5× to prevent runaway values
+                    dampened = max(0.5, min(2.5, 0.65 + 0.35 * ratio))
+                    rate_val = round(base_rate * dampened, 2)
+                    # Floor: never below global minimum for this transporter
+                    # Ceiling: never above 2.5× the global maximum
+                    from_z_rates[to_z] = round(
+                        max(global_min * 0.8, min(global_max * 2.5, rate_val)), 2
+                    )
 
             full[from_z] = from_z_rates
 
@@ -909,46 +974,82 @@ class OICREngine:
     ) -> Dict[str, float]:
         """
         Fill in missing destination zones using distance interpolation.
+
+        CRITICAL RULE: X-zones (X1=Andaman, X2=Lakshadweep, X3=J&K/Ladakh) have
+        extremely high rates due to remoteness / island surcharges.  Using them as
+        interpolation references for regular zones (N, S, E, W, C, NE) produces
+        wildly inflated rates — the "Leh/Agartala rate applied to Kolkata" bug.
+
+        Strategy:
+          • For a regular destination (N/S/E/W/C/NE): use ONLY regular zones as
+            reference pool and cap interpolated rate at max_regular_rate.
+          • For a special destination (X1/X2/X3): allow any zone as reference,
+            cap at max_rate * 2 (these really are expensive).
         """
+        SPECIAL = {'X1', 'X2', 'X3'}
+
         filled = dict(origin_rates)
 
-        # Find min/max rate in known data for clamping
-        rates_list = [r for r in filled.values() if r > 0]
-        if not rates_list:
+        rates_all   = [r for r in filled.values() if r > 0]
+        if not rates_all:
             return filled
-        min_r, max_r = min(rates_list), max(rates_list)
 
-        # For missing zones, interpolate from nearest known zone
+        # Separate regular-zone rates so X-zone outliers can't skew the range
+        rates_reg   = [r for z, r in filled.items() if z not in SPECIAL and r > 0]
+        if not rates_reg:
+            rates_reg = rates_all     # all rates are special — use all
+
+        min_r   = min(rates_reg)
+        max_r   = max(rates_reg)      # ceiling for regular-zone interpolation
+        avg_r   = sum(rates_reg) / len(rates_reg)
+
+        if origin_zone not in ZONE_COORDS:
+            # No geo data — fall back to average for everything
+            for to_z in ALL_ZONES:
+                if to_z not in filled:
+                    filled[to_z] = round(avg_r, 2)
+            return filled
+
         for to_z in ALL_ZONES:
             if to_z in filled or to_z not in ZONE_COORDS:
                 continue
-            if origin_zone not in ZONE_COORDS:
-                filled[to_z] = sum(rates_list) / len(rates_list)
-                continue
 
+            is_special_dest = to_z in SPECIAL
             dist_to_missing = _haversine(ZONE_COORDS[origin_zone], ZONE_COORDS[to_z])
 
-            # Find nearest known zone (by distance from origin)
-            best_ref = None
+            # Reference pool: never use X-zones for regular destinations
+            ref_pool = {
+                z: r for z, r in filled.items()
+                if z in ZONE_COORDS and r > 0
+                and (is_special_dest or z not in SPECIAL)
+            }
+            if not ref_pool:
+                # Absolute fallback: average of what we have
+                filled[to_z] = round(avg_r, 2)
+                continue
+
+            # Find the known zone whose distance-from-origin is closest to
+            # the missing zone's distance-from-origin (nearest distance match)
+            best_ref      = None
             best_ref_dist = float("inf")
-            for known_z, known_rate in filled.items():
-                if known_z not in ZONE_COORDS:
-                    continue
+            for known_z, known_rate in ref_pool.items():
                 d = abs(_haversine(ZONE_COORDS[origin_zone], ZONE_COORDS[known_z]) - dist_to_missing)
                 if d < best_ref_dist:
                     best_ref_dist = d
                     best_ref = (known_z, known_rate)
 
             if best_ref:
-                # Interpolate: scale the closest known rate by distance ratio
                 ref_zone, ref_rate = best_ref
                 ref_dist = _haversine(ZONE_COORDS[origin_zone], ZONE_COORDS[ref_zone])
                 if ref_dist > 0:
-                    ratio = dist_to_missing / ref_dist
-                    interp = ref_rate * (0.7 + 0.3 * ratio)
-                    filled[to_z] = round(max(min_r, min(max_r * 1.5, interp)), 2)
+                    ratio    = dist_to_missing / ref_dist
+                    interp   = ref_rate * (0.7 + 0.3 * ratio)
+                    # Hard cap: regular zones can't exceed the highest regular rate;
+                    # special zones can go up to 2× the highest regular rate.
+                    cap = max_r if not is_special_dest else max(max_r * 2.0, max(rates_all))
+                    filled[to_z] = round(max(min_r, min(cap, interp)), 2)
                 else:
-                    filled[to_z] = ref_rate
+                    filled[to_z] = round(ref_rate, 2)
 
         return filled
 

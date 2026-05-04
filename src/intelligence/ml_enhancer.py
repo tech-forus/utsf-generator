@@ -666,32 +666,14 @@ class AdvancedUTSFEnhancer:
                     zone_rates = value
                     break
         
-        # Method 3: Generate from ODA charges (fallback)
-        if not zone_rates:
-            oda_charges = charges.get("odaCharges", {})
-            if isinstance(oda_charges, dict) and "matrix" in oda_charges:
-                # Extract base rate from ODA
-                base_rate = self._extract_base_rate_from_oda_ml(oda_charges["matrix"])
-                
-                # Generate zone rates using ML model
-                zone_rates = {}
-                zones = ["N1", "N2", "N3", "N4", "S1", "S2", "S3", "S4", "E1", "E2", "W1", "W2", "C1", "C2", "NE1", "NE2", "X1"]
-                
-                for origin in zones:
-                    zone_rates[origin] = {}
-                    for dest in zones:
-                        predicted_rate = self.ml_classifier.zone_distance_model.predict_zone_rate(
-                            origin, dest, base_rate
-                        )
-                        zone_rates[origin][dest] = predicted_rate
-                
-                return {
-                    "type": "zone_rates_ml",
-                    "confidence": 0.85,
-                    "data": {
-                        "zone_matrix": zone_rates
-                    }
-                }
+        # Method 3 (DISABLED): Do NOT generate zone rates from ODA charges.
+        # ODA charges are delivery-area surcharges — they have nothing to do with
+        # base freight per-kg rates. Dividing ODA fees by weight ranges to infer
+        # zone rates produces wildly incorrect values (e.g. N1→S1=19.4 Rs/kg when
+        # the real rate is 12.0 Rs/kg). If no rate matrix was found in the source
+        # files, leave zone_matrix empty — the user must provide a real rate card.
+        # if not zone_rates:
+        #     ... (removed — was hallucinating rates from ODA distance matrix)
         
         if zone_rates:
             return {

@@ -1226,14 +1226,20 @@ class ExcelParser(BaseParser):
                     pin_col = ci
                     break
                 if any(kw in h for kw in _PIN_HEADER_SUBSTR):
-                    pin_col = ci
-                    break
+                    # Reject title/description cells — "VX PIN CODE LIST", "Pincode Data Sheet"
+                    # A real header cell has at most 3 words and the keyword is its primary content.
+                    words = h.split()
+                    if len(words) <= 3:
+                        pin_col = ci
+                        break
 
             if pin_col is not None:
                 header_row_idx = ri
                 print(f"[Excel:{sheet_name}] Pincode header at row {ri}: "
                       f"pin_col={pin_col} ('{header_lower[pin_col]}')")
 
+                # Track any "category" / "cat" / "type" column — V Express style
+                _category_col = None
                 for ci, h in enumerate(header_lower):
                     if ci == pin_col:
                         continue
@@ -1257,6 +1263,26 @@ class ExcelParser(BaseParser):
                     if ("zone" in h) and zone_col is None and ci != pin_col:
                         zone_col = ci
                         print(f"[Excel:{sheet_name}] Zone col: {ci} ('{h}')")
+                    # "category" / "cat" / "type" column — may have ODA values like "ODA A", "ODA B"
+                    if h in ("category", "cat", "type", "service type", "shipment type") and _category_col is None:
+                        _category_col = ci
+
+                # If a category column was found, scan a sample of rows to see if it
+                # contains ODA values (e.g. "ODA A", "ODA B", "ODA C", "ODA D").
+                # V Express and several other transporters use this format.
+                if _category_col is not None and oda_col is None and oda_flag_col is None:
+                    sample_cats = set()
+                    # Scan up to 300 rows — category files may have many STD rows
+                    # (e.g. all Delhi pincodes first) before ODA ones appear
+                    for sample_row in rows[header_row_idx + 1:header_row_idx + 300]:
+                        if _category_col < len(sample_row):
+                            v = _cell_str(sample_row[_category_col]).upper().strip()
+                            if v and v not in ("NAN", "NONE", "NULL", ""):
+                                sample_cats.add(v)
+                    if any(c.startswith("ODA") for c in sample_cats):
+                        oda_col = _category_col
+                        print(f"[Excel:{sheet_name}] ODA via CATEGORY col {_category_col} "
+                              f"(values: {sorted(sample_cats)[:8]})")
                 break
 
         # Auto-detect by value scan if no named header found — try columns 0..7
@@ -1329,7 +1355,11 @@ class ExcelParser(BaseParser):
             # --- Explicit ODA positive flag (Y=ODA, N=served) ---
             if oda_col is not None and oda_col < len(row):
                 oda_raw = _cell_str(row[oda_col]).strip().lower()
+                # Standard ODA values
                 if oda_raw in ODA_POSITIVE or oda_raw in ODA_UNICODE:
+                    is_oda = True
+                # V Express / multi-tier ODA: "ODA A", "ODA B", "ODA C", "ODA D", etc.
+                elif oda_raw.startswith("oda"):
                     is_oda = True
 
             if oda_flag_col is not None and oda_flag_col < len(row):
@@ -1495,6 +1525,25 @@ class ExcelParser(BaseParser):
                 )
                 vf = _parse_vf_from_row(row, first_val_col)
 
+                # ── Special handling: CFT divisor conversion ─────────────────
+                # "1CFT  8 KG" means 1 cubic foot weighs 8 kg.
+                # Standard kFactor is in cm³, so convert: 28317 cm³ / kgPerCFT.
+                # E.g. 8 kg/CFT → kFactor = 28317/8 = 3540.
+                # If the value is already large (>= 200) it's already in cm³ form.
+                if mapped_key == "divisor" and ("cft" in key or "cfactor" in key or "k factor" in key):
+                    raw_num_cells = [c for c in val_cells if _safe_float(c) is not None]
+                    if raw_num_cells:
+                        cft_kg = _safe_float(raw_num_cells[0])
+                        if cft_kg is not None and 0 < cft_kg < 200:
+                            converted = round(28316.8 / cft_kg)
+                            print(f"[Excel:{sheet_name}]   CFT divisor: {cft_kg} kg/CFT "
+                                  f"-> kFactor={converted} cm3")
+                            if charges.get("divisor") is None:
+                                charges["divisor"] = converted
+                            if charges.get("kFactor") is None:
+                                charges["kFactor"] = converted
+                    continue   # handled above, skip generic vf path
+
                 if len(vf) >= 2:
                     # Both v and f found — store as dict
                     result_val = vf
@@ -1504,7 +1553,18 @@ class ExcelParser(BaseParser):
                     # Only one value — could be percentage or fixed
                     single = list(vf.values())[0]
                     kind = list(vf.keys())[0]
-                    if mapped_key in ("fuel", "divisor", "minWeight") or kind == "v":
+                    # Charges that are ALWAYS fixed fees (not percentages) — force to f.
+                    # The heuristic puts any value <= 100 into v (assuming percentage),
+                    # but topay/cod/docket/dacc/dod/fm charges are flat Rs amounts.
+                    _ALWAYS_FIXED = {"topayCharges","codCharges","docketCharges",
+                                     "daccCharges","dodCharges","fmCharges",
+                                     "appointmentCharges","prepaidCharges"}
+                    if mapped_key in _ALWAYS_FIXED and kind == "v":
+                        # Swap: it's a fixed Rs amount, not a percentage
+                        result_val = {"v": 0.0, "f": single}
+                        print(f"[Excel:{sheet_name}]   charge {mapped_key} = {result_val} "
+                              f"(fixed Rs {single}, not pct)")
+                    elif mapped_key in ("fuel", "divisor", "minWeight") or kind == "v":
                         result_val = single
                     else:
                         result_val = vf  # store as dict even with single key

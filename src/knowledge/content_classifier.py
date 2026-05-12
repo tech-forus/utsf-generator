@@ -95,11 +95,44 @@ _WEIGHT_SLAB_SIGNALS = {
     "per_kg_rates": re.compile(r'\b\d+(?:\.\d+)?\s*/?\s*kg\b', re.I),
 }
 
+# Volumetric / dimensional weight sections — dangerous for charge extraction
+# because they contain large divisor constants (1728, 5000, 2832) that bleed
+# into docketCharges / daccCharges / codCharges via greedy regexes.
+_VOLUMETRIC_SIGNALS = {
+    "cft_formula":  re.compile(r'\b1\s*cft\s*[=:]\s*\d+', re.I),
+    "dim_formula":  re.compile(
+        r'\b(?:l\s*[x×]\s*b\s*[x×]\s*h|length\s*[x×]\s*breadth|'
+        r'dimensional\s*weight|volumetric\s*weight\s*[=:=]|'
+        r'k[\s-]*factor\s*[=:]\s*\d{3,}|divisor\s*[=:]\s*\d{3,})\b', re.I),
+    "volumetric_words": re.compile(
+        r'\b(?:volumetric|dimensional|cft|cubic\s*(?:feet|foot|inch)|'
+        r'volume\s*weight|vol\.?\s*wt)\b', re.I),
+}
+
+# Legal / T&C sections — contain clause numbers that can falsely match charge values
+_LEGAL_SIGNALS = {
+    "legal_words":  re.compile(
+        r'\b(?:clause|notwithstanding|indemnif|arbitration|jurisdiction|'
+        r'liability|govern(?:ed|ing)\s*by|subject\s*to\s*(?:the\s*)?terms|'
+        r'terms\s*and\s*conditions|t\s*&\s*c)\b', re.I),
+    "legal_refs":   re.compile(r'\b(?:section\s+\d+|clause\s+\d+|sub-clause)\b', re.I),
+}
+
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Scoring weights: how much each signal type contributes
 # ---------------------------------------------------------------------------
 
 _WEIGHTS = {
+    "VOLUMETRIC": {
+        "cft_formula":      5.0,   # "1 CFT = 1728" is unambiguous
+        "dim_formula":      4.0,
+        "volumetric_words": 1.5,
+    },
+    "LEGAL": {
+        "legal_words":      3.5,
+        "legal_refs":       2.0,
+    },
     "ZONE_MATRIX": {
         "zone_codes":    3.0,   # strongest signal
         "zone_words":    1.0,
@@ -272,6 +305,8 @@ class ContentClassifier:
             "COMPANY_INFO": _COMPANY_SIGNALS,
             "ODA_LIST":     _ODA_SIGNALS,
             "WEIGHT_SLAB":  _WEIGHT_SLAB_SIGNALS,
+            "VOLUMETRIC":   _VOLUMETRIC_SIGNALS,
+            "LEGAL":        _LEGAL_SIGNALS,
         }
         return mapping.get(category, {}).get(signal_name)
 

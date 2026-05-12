@@ -45,7 +45,7 @@ _COMPANY_PATTERNS = {
 class PPTParser(BaseParser):
     SUPPORTED_EXTENSIONS = [".pptx", ".ppt"]
 
-    def parse(self, file_path: str) -> Dict[str, Any]:
+    def parse(self, file_path: str, doc_context=None) -> Dict[str, Any]:
         ext = os.path.splitext(file_path)[1].lower()
 
         if ext == ".pptx":

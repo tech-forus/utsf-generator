@@ -317,6 +317,9 @@ CHARGE_MAP = {
     "fov charges":              "rovCharges",
     "owner's risk":             "rovCharges",
     "owners risk":              "rovCharges",
+    # NOTE: bare "risk" is intentionally NOT mapped here.
+    # "risk" alone matches legal/loss clauses, not ROV charges.
+    # Must have at least "risk of value", "owner's risk", "rov", or "fov".
     "insurance":                "insuranceCharges",
     "insurance charges":        "insuranceCharges",
     # ODA
@@ -352,11 +355,14 @@ CHARGE_MAP = {
     "other charges":            "miscCharges",
     "idc":                      "miscCharges",
     "indirect cost":            "miscCharges",
-    # Topay
+    # Topay — "to pay" alone excluded; too generic (matches payment-terms text)
     "topay":                    "topayCharges",
-    "to pay":                   "topayCharges",
     "topay charges":            "topayCharges",
     "to pay charges":           "topayCharges",
+    "to pay surcharge":         "topayCharges",
+    "fod":                      "topayCharges",   # TCI: FOD = Freight on Delivery
+    "freight on delivery":      "topayCharges",
+    "fod charges":              "topayCharges",
     # DOD
     "dod":                      "dodCharges",
     "dod charges":              "dodCharges",
@@ -421,9 +427,11 @@ CHARGE_MAP = {
     "faf":                      "fuel",
     "environmental surcharge":  "greenTax",
     "environmental charge":     "greenTax",
-    "risk charge":              "rovCharges",
-    "consignment risk":         "rovCharges",
-    "value added risk":         "rovCharges",
+    "ngt charge":               "greenTax",   # TCI: NGT = National Green Tribunal charge
+    "ngt":                      "greenTax",
+    "green cess delhi":         "greenTax",
+    "pollution charge":         "greenTax",
+    # "risk charge" / "consignment risk" removed — too ambiguous; caused ghost ROV extraction
     "octroi":                   "miscCharges",
     "octroi / entry tax":       "miscCharges",
     "entry tax":                "miscCharges",
@@ -450,6 +458,10 @@ CHARGE_MAP = {
     "bilty":                    "docketCharges",
     "bilty charges":            "docketCharges",
     "consignment note":         "docketCharges",
+    "dwb":                      "docketCharges",   # TCI: DWB = Docket Waybill
+    "dwb charges":              "docketCharges",
+    "waybill charges":          "docketCharges",
+    "waybill":                  "docketCharges",
     "oda per consignment":      "odaCharges",
     "oda/edl":                  "odaCharges",
     "oda / edl":                "odaCharges",
@@ -470,7 +482,7 @@ CHARGE_MAP = {
     "goods insurance":          "insuranceCharges",
     "insured value":            "insuranceCharges",
     "fov%":                     "rovCharges",
-    "risk":                     "rovCharges",
+    # "risk" alone removed — too ambiguous (matches legal clauses, not ROV freight charges)
     "minimum freight charges":  "minCharges",
     "min freight charges":      "minCharges",
     "base rate":                "minCharges",
@@ -487,9 +499,22 @@ CHARGE_MAP = {
     "green cess":               "greenTax",
     "ecology charge":           "greenTax",
     "environmental cess":       "greenTax",
-    "gst":                      None,   # skip – tax, not a freight charge
+    "gst":                      "gst",   # priceRate.gst percentage field
+    "gst%":                     "gst",
+    "gst rate":                 "gst",
+    "gst @":                    "gst",
+    "igst":                     "gst",
+    # Explicitly skip GST registration / company-identity keys so that
+    # "GSTIN: 29AAACR5055K1ZB" never contaminates priceRate.gst with 29.
+    "gstin":                    None,
+    "gstin no":                 None,
+    "gstno":                    None,
+    "gst no":                   None,
+    "gst no.":                  None,
+    "gst number":               None,
+    "gst registration":         None,
+    "gst registration no":      None,
     "service tax":              None,
-    "igst":                     None,
     "cgst":                     None,
     "sgst":                     None,
     "tds":                      None,
@@ -557,17 +582,65 @@ def _upper(val) -> str:
 
 def _is_zone_token(token: str) -> bool:
     t = token.upper().strip()
-    # Reject bare numbers — rate values like 5, 10, 22 should NEVER be zone tokens.
-    # This prevents misidentifying rate values in data rows as zone origin labels.
     if re.match(r'^\d+(\.\d+)?$', t):
         return False
     if t in ZONE_TOKENS:
         return True
-    # Try normalising hyphens/underscores: "Zone-1" → "ZONE 1", "Zone_A" → "ZONE A"
     t2 = re.sub(r'[-_]', ' ', t)
     if t2 != t and t2 in ZONE_TOKENS:
         return True
+    # Slash/plus separators: "N1/NCR", "N2/N3", "S1/S2", "E1+E2" — any segment
+    for seg in re.split(r'[/+]', t):
+        seg = seg.strip()
+        if seg and seg in ZONE_TOKENS:
+            return True
+    parts = t2.split()
+    if parts and parts[0] in ZONE_TOKENS:
+        return True
     return False
+
+
+def _expand_zone_token(token: str) -> List[str]:
+    """
+    Expand a zone column header to a list of canonical zones.
+    Handles: "N1", "N2/N3", "S1/S2", "NORTH", "N1+N2", "N2/N3/N4" etc.
+    Returns empty list if not a zone token.
+    """
+    t = token.upper().strip()
+    if not t:
+        return []
+
+    # Direct hit
+    if t in ZONE_EXPANSION:
+        return ZONE_EXPANSION[t]
+
+    # Hyphen/underscore normalisation
+    t2 = re.sub(r'[-_]', ' ', t)
+    if t2 in ZONE_EXPANSION:
+        return ZONE_EXPANSION[t2]
+
+    # Slash/plus — expand ALL segments independently and union
+    # "N2/N3" → [N2, N3]   "S1/S2" → [S1, S2]
+    segments = re.split(r'[/+]', t)
+    if len(segments) > 1:
+        result = []
+        for seg in segments:
+            seg = seg.strip()
+            expanded = ZONE_EXPANSION.get(seg, [])
+            if not expanded and seg in set(_CANONICAL):
+                expanded = [seg]
+            result.extend(z for z in expanded if z not in result)
+        if result:
+            return result
+
+    # Strip city qualifier: "N1 NCR" → take first word
+    parts = t2.split()
+    if parts and parts[0] in ZONE_EXPANSION:
+        return ZONE_EXPANSION[parts[0]]
+    if parts and parts[0] in set(_CANONICAL):
+        return [parts[0]]
+
+    return []
 
 
 def _count_zone_tokens(row: List) -> int:
@@ -576,12 +649,31 @@ def _count_zone_tokens(row: List) -> int:
 
 def _safe_float(val) -> Optional[float]:
     s = _cell_str(val)
-    # Strip currency and unit noise
+
+    # ── Special format handlers (before generic stripping) ────────────────────
+
+    # BASE+ADDITIONAL: "8.50+0.50" → 8.50 (take base, ignore increment)
+    _base_add = re.match(r'^(\d+(?:\.\d+)?)\s*\+\s*(\d+(?:\.\d+)?)$', s.strip())
+    if _base_add:
+        return float(_base_add.group(1))
+
+    # Ratio divisor: "1:4750" → 4750  (only for number:number)
+    _ratio = re.match(r'^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$', s.strip())
+    if _ratio:
+        return float(_ratio.group(2))
+
+    # Formula divisor: "28316.85/10" → 2831.685  (bare A/B, no units)
+    _formula = re.match(r'^(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)$', s.strip())
+    if _formula:
+        b = float(_formula.group(2))
+        return round(float(_formula.group(1)) / b, 4) if b else None
+
+    # ── Generic stripping ─────────────────────────────────────────────────────
     s = re.sub(r'(?i)\binr\b\.?\s*', '', s)      # INR / INR.
     s = re.sub(r'(?i)rs\.?\s*', '', s)            # Rs. / Rs
     s = re.sub(r'[₹,]', '', s)                    # ₹ and commas
-    s = re.sub(r'%', '', s)                         # percent sign
-    s = re.sub(r'(?i)\s*(kgs?|kg|days?|lrs?|pieces?|per\s+\w+|/-)\s*$', '', s)  # trailing units
+    s = re.sub(r'%', '', s)                        # percent sign
+    s = re.sub(r'(?i)\s*(kgs?|kg|days?|lrs?|pieces?|per\s+\w+|/-)\s*$', '', s)
     s = s.strip()
     if not s or s in ("-", "na", "n/a", "nil", "none", "null", "", "x", "n"):
         return None
@@ -625,16 +717,38 @@ def _parse_pincode(val) -> Optional[int]:
 
 
 def _extract_pincodes_from_cell(val) -> List[int]:
-    """Extract one or more pincodes from a cell value.
-    Handles: plain "560001", space-sep "560 001", comma-sep "560001,560002",
-    slash-sep "560001/560002", and inline text "Pincode: 560001".
+    """
+    Extract one or more pincodes from a cell value.
+    Handles:
+      plain         "560001"
+      space-sep     "560 001"
+      comma-sep     "560001,560002,560003"
+      slash-sep     "560001/560002"
+      range text    "226001 to 226010"   → expands all 10 pincodes
+      range dash    "226001-226010"      → expands all 10 pincodes
+      inline text   "Pincode: 560001"
     """
     text = _cell_str(val)
     if not text:
         return []
-    # Find all 6-digit sequences (optionally space-separated like "560 001")
-    candidates = re.findall(r'\b(\d\s*\d\s*\d\s*\d\s*\d\s*\d)\b', text)
+
     result = []
+
+    # Range expansion: "XXXXXX to YYYYYY" or "XXXXXX-YYYYYY"
+    range_m = re.search(
+        r'\b([1-9]\d{5})\s*(?:to|-)\s*([1-9]\d{5})\b', text, re.IGNORECASE
+    )
+    if range_m:
+        try:
+            lo = int(range_m.group(1))
+            hi = int(range_m.group(2))
+            if 100000 <= lo <= hi <= 999999 and (hi - lo) <= 500:
+                return list(range(lo, hi + 1))
+        except ValueError:
+            pass
+
+    # All 6-digit sequences (comma/slash/space separated)
+    candidates = re.findall(r'\b(\d\s*\d\s*\d\s*\d\s*\d\s*\d)\b', text)
     for c in candidates:
         clean = c.replace(" ", "")
         try:
@@ -719,7 +833,7 @@ def _parse_vf_from_row(row: List, start_col: int = 1) -> Dict:
 class ExcelParser(BaseParser):
     SUPPORTED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".tsv"]
 
-    def parse(self, file_path: str) -> Dict[str, Any]:
+    def parse(self, file_path: str, doc_context=None) -> Dict[str, Any]:
         ext = os.path.splitext(file_path)[1].lower()
         if ext in (".csv", ".tsv"):
             return self._parse_csv(file_path)
@@ -887,7 +1001,16 @@ class ExcelParser(BaseParser):
                 except Exception as _oicr_err:
                     print(f"[Excel:{sheet_name}] OICR check failed: {_oicr_err}")
 
-            # 1. Zone matrix (highest value)
+            # 1a. Pincode-grounded zone matrix (highest accuracy — try first)
+            # This uses pincodes.json to resolve dest zones rather than trusting
+            # column labels, eliminating the row/column transposition error.
+            if not detected.get("zone_matrix"):
+                zm_pg = self._try_parse_pincode_rate_matrix(rows, sheet_name)
+                if zm_pg:
+                    detected["zone_matrix"] = zm_pg
+                    classified_as.append(f"PINCODE-GROUNDED ZONE MATRIX ({len(zm_pg)} origins)")
+
+            # 1b. Standard zone-label matrix (fallback when rows have zone labels)
             if not detected.get("zone_matrix"):
                 zm = self._try_parse_zone_matrix(rows, sheet_name)
                 if zm:
@@ -912,8 +1035,38 @@ class ExcelParser(BaseParser):
                         f"{len(pinlist['oda'])} ODA)"
                     )
 
-            # 3. Charges — always try (rate cards can have BOTH matrix AND charges)
-            charges = self._try_parse_charges(rows, sheet_name)
+            # 3. Charges — section-aware extraction
+            # Segment rows into typed sections so VOLUMETRIC rows don't
+            # contaminate charge extraction (prevents ghost values like 1728).
+            charge_rows_to_parse = rows  # default: full sheet
+            try:
+                from knowledge.section_segmenter import SectionSegmenter
+                seg = SectionSegmenter()
+                row_sections = seg.segment_rows(rows, sheet_name)
+                charge_rows = seg.extract_category_rows(
+                    row_sections, "CHARGES", min_confidence=0.3
+                )
+                mixed_rows = seg.extract_category_rows(
+                    row_sections, "MIXED", min_confidence=0.3
+                )
+                unknown_rows = seg.extract_category_rows(
+                    row_sections, "UNKNOWN", min_confidence=0.0
+                )
+                # Use section-filtered rows if we found any CHARGES sections;
+                # fall back to full sheet if segmenter found nothing useful.
+                filtered = charge_rows + mixed_rows + unknown_rows
+                if len(charge_rows) > 0:
+                    charge_rows_to_parse = filtered
+                    blocked = [s for s in row_sections
+                               if s.category in ("VOLUMETRIC", "LEGAL")]
+                    if blocked:
+                        print(f"[Excel:{sheet_name}]   Section segmenter blocked "
+                              f"{sum(len(b.rows) for b in blocked)} rows "
+                              f"({[b.category for b in blocked]})")
+            except Exception as _se:
+                pass  # segmenter is best-effort
+
+            charges = self._try_parse_charges(charge_rows_to_parse, sheet_name)
             if charges:
                 detected.setdefault("charges", {})
                 # Merge: {v,f} dicts take priority over scalars already found
@@ -1030,53 +1183,43 @@ class ExcelParser(BaseParser):
         if len(rows) < 3:
             return None
 
-        scan_limit = min(20, len(rows))
+        # RC-1 FIX: increased from 20 → 35 to catch multi-row headers deep in sheet
+        scan_limit = min(35, len(rows))
         header_row_idx = None
         header = []
         origin_col = 0  # which column holds the origin zone label
 
+        # Collect ALL rows with zone-token score >= 2 (not just the first >= 3).
+        # This detects multi-row headers: e.g. row 2 = "NORTH SOUTH EAST WEST",
+        # row 3 = "N1 N2 S1 S2 E1 E2" — we want row 3 as the definitive header.
+        _zone_hit_rows = []  # (row_idx, score)
         for ri in range(scan_limit):
             row = rows[ri]
             score = _count_zone_tokens(row)
             print(f"[Excel:{sheet_name}] Row {ri}: zone-token score={score} "
                   f"(cells: {[_cell_str(c) for c in row[:12]]})")
-            if score >= 3:
-                header_row_idx = ri
-                header = [_upper(c) for c in row]
-                print(f"[Excel:{sheet_name}] Zone matrix header at row {ri}: {header[:16]}")
-                break
+            if score >= 2:
+                _zone_hit_rows.append((ri, score))
 
-        if header_row_idx is None:
-            print(f"[Excel:{sheet_name}] No zone matrix header (no row with >= 3 zone tokens)")
+        if not _zone_hit_rows:
+            print(f"[Excel:{sheet_name}] No zone matrix header (no row with >= 2 zone tokens in rows 0-{scan_limit-1})")
             return None
 
-        # ── Determine origin column ────────────────────────────────────────────
-        # When header[0] is a label (e.g. "From/To", "Origin\Dest") and header[1]
-        # is a zone token, origin_col MIGHT be 1 (if data rows have blank col 0
-        # and origin label in col 1) OR 0 (if origin labels are in col 0 of data rows).
-        #
-        # CRITICAL: Always verify by peeking at actual data rows before committing.
-        # Getting this wrong shifts ALL rates by one column, producing wrong cross-zone rates.
-        if header and not _is_zone_token(header[0]) and len(header) > 1 and _is_zone_token(header[1]):
-            # Peek at first 6 data rows and count zone tokens in col 0 vs col 1
-            data_sample = rows[header_row_idx + 1:header_row_idx + 7]
-            col0_zone_hits = sum(
-                1 for r in data_sample
-                if r and _is_zone_token(_cell_str(r[0]))
-            )
-            col1_zone_hits = sum(
-                1 for r in data_sample
-                if len(r) > 1 and _is_zone_token(_cell_str(r[1]))
-            )
-            if col0_zone_hits > col1_zone_hits:
-                # Origin labels are in col 0 (most common: "From/To | N | W | E | S")
-                origin_col = 0
-                print(f"[Excel:{sheet_name}] origin_col=0 (data rows have zone tokens in col 0: "
-                      f"{col0_zone_hits} vs col 1: {col1_zone_hits})")
+        # Find the definitive header: last row in the first consecutive cluster
+        # of zone-hit rows (gap <= 3 blank rows = still same multi-row header).
+        header_row_idx = _zone_hit_rows[0][0]
+        for _i in range(1, len(_zone_hit_rows)):
+            _prev_ri, _ = _zone_hit_rows[_i - 1]
+            _curr_ri, _curr_score = _zone_hit_rows[_i]
+            if _curr_ri - _prev_ri <= 3:
+                # Still in the same header block — take the later (more specific) row
+                header_row_idx = _curr_ri
             else:
-                origin_col = 1
-                print(f"[Excel:{sheet_name}] origin_col=1 confirmed (col 1 has {col1_zone_hits} "
-                      f"zone tokens vs col 0: {col0_zone_hits})")
+                # Gap detected; stop at the end of the first cluster
+                break
+
+        header = [_upper(c) for c in rows[header_row_idx]]
+        print(f"[Excel:{sheet_name}] Zone matrix header at row {header_row_idx}: {header[:16]}")
 
         # Build column index: col_idx -> list of canonical zones
         # Use SmartMatcher (with ZONE_EXPANSION as fallback) for maximum coverage
@@ -1086,8 +1229,10 @@ class ExcelParser(BaseParser):
             h_stripped = h.strip()
             if not h_stripped:
                 continue
-            # Try direct ZONE_EXPANSION first (exact, fast); also try hyphen/underscore normalised
-            expansion = ZONE_EXPANSION.get(h_stripped) or ZONE_EXPANSION.get(re.sub(r'[-_]', ' ', h_stripped))
+            # Use _expand_zone_token which handles slash-separated headers like "N2/N3"
+            expansion = _expand_zone_token(h_stripped)
+            if not expansion:
+                expansion = ZONE_EXPANSION.get(h_stripped) or ZONE_EXPANSION.get(re.sub(r'[-_]', ' ', h_stripped))
             if expansion:
                 col_canonical[ci] = expansion
             elif sm:
@@ -1106,6 +1251,28 @@ class ExcelParser(BaseParser):
             return None
 
         print(f"[Excel:{sheet_name}] Zone columns: { {ci: v for ci, v in col_canonical.items()} }")
+
+        # RC-1 FIX: Robust origin_col — find the first column NOT in col_canonical
+        # (not a destination-zone column) that has zone-like values in data rows.
+        # Replaces the fragile col0-vs-col1 heuristic that broke when vendors added
+        # a "Sr. No." or "Remarks" column before the origin zone column.
+        _data_sample = rows[header_row_idx + 1: header_row_idx + 9]
+        _first_dest_col = min(col_canonical.keys()) if col_canonical else 99
+        _best_origin_col = 0
+        _best_hits = 0
+        for _ci in range(min(8, _first_dest_col)):
+            if _ci in col_canonical:
+                continue  # skip destination-zone columns
+            _hits = sum(
+                1 for _r in _data_sample
+                if len(_r) > _ci and _is_zone_token(_cell_str(_r[_ci]))
+            )
+            if _hits > _best_hits:
+                _best_hits = _hits
+                _best_origin_col = _ci
+        origin_col = _best_origin_col
+        print(f"[Excel:{sheet_name}] origin_col={origin_col} "
+              f"(zone hits in data rows: {_best_hits}/{len(_data_sample)})")
 
         matrix: Dict[str, Dict[str, float]] = {}
         data_rows_processed = 0
@@ -1126,7 +1293,9 @@ class ExcelParser(BaseParser):
             if not raw_origin:
                 continue
 
-            origin_zones = ZONE_EXPANSION.get(raw_origin) or ZONE_EXPANSION.get(re.sub(r'[-_]', ' ', raw_origin))
+            origin_zones = _expand_zone_token(raw_origin)
+            if not origin_zones:
+                origin_zones = ZONE_EXPANSION.get(raw_origin) or ZONE_EXPANSION.get(re.sub(r'[-_]', ' ', raw_origin))
             if not origin_zones and sm:
                 r = sm.match_zone(raw_origin, min_confidence=0.65)
                 if r.value:
@@ -1344,38 +1513,51 @@ class ExcelParser(BaseParser):
                 continue
 
             is_oda = False
+            is_non_serviceable = False   # truly not served (not even ODA)
 
-            # --- Delivery column (Y=served normally, N=ODA/restricted) ---
-            if delivery_col is not None and delivery_col < len(row):
-                del_val = _cell_str(row[delivery_col]).strip().upper()
-                if del_val in ("N", "NO", "FALSE", "0", "X", "NOT SERVICEABLE", "NS"):
-                    is_oda = True   # delivery=N → ODA
-                # Y → normal, no change
-
-            # --- Explicit ODA positive flag (Y=ODA, N=served) ---
+            # --- Explicit ODA positive flag column (checked FIRST — highest authority) ---
+            explicit_oda_found = False
             if oda_col is not None and oda_col < len(row):
                 oda_raw = _cell_str(row[oda_col]).strip().lower()
-                # Standard ODA values
                 if oda_raw in ODA_POSITIVE or oda_raw in ODA_UNICODE:
                     is_oda = True
-                # V Express / multi-tier ODA: "ODA A", "ODA B", "ODA C", "ODA D", etc.
-                elif oda_raw.startswith("oda"):
+                    explicit_oda_found = True
+                elif oda_raw.startswith("oda"):   # "ODA A", "ODA-B", etc.
                     is_oda = True
+                    explicit_oda_found = True
 
             if oda_flag_col is not None and oda_flag_col < len(row):
                 oda_raw = _cell_str(row[oda_flag_col]).strip().upper()
                 if oda_raw in ("Y", "YES", "TRUE", "1", "X"):
                     is_oda = True
+                    explicit_oda_found = True
 
-            # All pincodes in the list are served (ODA pincodes are served too —
-            # just with extra charges). Only skip if delivery explicitly marked N
-            # AND we have NO other ODA context (means truly non-serviceable).
-            if delivery_col is not None:
-                # With delivery col: N = still served (ODA), Y = served normal
-                served.append(pin)
-            else:
-                served.append(pin)
+            # --- Delivery column ---
+            # Three possible states:
+            #   Y + no-ODA  → served normally
+            #   N + ODA=Y   → served as ODA (already flagged above)
+            #   N + ODA=blank/N → truly non-serviceable (skip this pin entirely)
+            if delivery_col is not None and delivery_col < len(row):
+                del_val = _cell_str(row[delivery_col]).strip().upper()
+                is_delivery_no = del_val in (
+                    "N", "NO", "FALSE", "0", "NOT SERVICEABLE", "NS",
+                    "INACTIVE", "UNSERVICEABLE", "RESTRICTED"
+                )
+                if is_delivery_no:
+                    if explicit_oda_found and is_oda:
+                        pass   # already marked ODA — keep as served+ODA
+                    elif not explicit_oda_found:
+                        # No ODA column or no ODA flag → delivery=N means non-serviceable
+                        # (not ODA — just not served at all). Skip this pin.
+                        is_non_serviceable = True
+                    # else: delivery=N but explicit ODA flag also present → contradictory;
+                    # trust the explicit ODA flag
 
+            if is_non_serviceable:
+                skipped += 1
+                continue
+
+            served.append(pin)
             if is_oda:
                 oda.append(pin)
 
@@ -1447,10 +1629,52 @@ class ExcelParser(BaseParser):
                 print(f"[Excel:{sheet_name}]   ODA weight bands: "
                       f"{len(oda_bands.get('bands', []))} weight bands")
 
+        # Per-box / per-carton handling charge detection
+        per_box = self._try_parse_per_box_handling(rows, sheet_name)
+        if per_box:
+            charges["handlingCharges"] = per_box
+
         # Weight-slab pricing table (zone-wise rates per weight band)
         weight_slab = self._try_parse_weight_slab(rows, sheet_name)
         if weight_slab:
             charges["weightSlabRates"] = weight_slab
+
+        # ── Horizontal table detection (TCI-style: labels in row N, values in row N+1)
+        # Scans first 6 rows to find a header row with 3+ charge keywords followed
+        # immediately by a pure-numeric row. Converts to KV pairs for standard scanner.
+        _HORIZ_KW = re.compile(
+            r'(?i)\b(?:dwb|docket|minimum|min|cod|dacc|fod|ngt|'
+            r'volumetric|fuel|handling|rov|fov|oda|insurance|topay|prepaid)\b'
+        )
+        for _hri in range(min(6, len(rows) - 1)):
+            _hrow = rows[_hri]
+            _h_kws = sum(1 for c in _hrow
+                         if _HORIZ_KW.search(str(c) if c is not None else ''))
+            if _h_kws < 3:
+                continue
+            _vrow = rows[_hri + 1] if _hri + 1 < len(rows) else []
+            _v_nums = sum(1 for c in _vrow
+                          if c is not None and str(c).strip() not in ('', 'None')
+                          and _safe_float(c) is not None)
+            if _v_nums < 4:
+                continue
+            # Build KV: pair each header column with its value column
+            _col_header: Dict[int, str] = {}
+            for ci, cell in enumerate(_hrow):
+                s = str(cell).strip() if cell is not None else ""
+                if s and s.lower() not in ('none', ''):
+                    _col_header[ci] = s
+            _kv_rows = []
+            for col_idx, header_text in _col_header.items():
+                if col_idx < len(_vrow):
+                    val = _vrow[col_idx]
+                    if val is not None and str(val).strip() not in ('', 'None'):
+                        _kv_rows.append([header_text, str(val).strip()])
+            if len(_kv_rows) >= 3:
+                print(f"[Excel:{sheet_name}]   Horizontal charge table at row {_hri} "
+                      f"-> {len(_kv_rows)} key-value pairs")
+                rows = _kv_rows + list(rows[_hri + 2:])
+                break
 
         # Second pass: key-value rows (+ single-cell inline text)
         for ri, row in enumerate(rows):
@@ -1480,11 +1704,21 @@ class ExcelParser(BaseParser):
             for key_col, key in key_candidates:
                 val_start = key_col + 1
 
+                # Normalize key: collapse newlines and extra whitespace for matching
+                key_norm = re.sub(r'\s+', ' ', key).strip()
+
                 # Layer 1: exact match in CHARGE_MAP (longest pattern first)
                 mapped_key = _UNSET = object()
                 for pattern in sorted(CHARGE_MAP.keys(), key=len, reverse=True):
                     fc4_key = CHARGE_MAP[pattern]
-                    if pattern == key or (len(pattern) > 4 and pattern in key):
+                    if (pattern == key or pattern == key_norm):
+                        mapped_key = fc4_key
+                        break
+                    # Substring: use word-boundary check so "gst" won't match "gstin",
+                    # but "cod" WILL match "cod service", "cod charges", etc.
+                    if (len(pattern) >= 3 and
+                            (re.search(r'\b' + re.escape(pattern) + r'\b', key) or
+                             re.search(r'\b' + re.escape(pattern) + r'\b', key_norm))):
                         mapped_key = fc4_key
                         break
 
@@ -1544,30 +1778,46 @@ class ExcelParser(BaseParser):
                                 charges["kFactor"] = converted
                     continue   # handled above, skip generic vf path
 
+                # For complex value strings (containing both % and Rs), run through
+                # ChargeNormalizer first — it handles "1.25% of COD value (Min Rs.85)"
+                # and "Rs.3/Kg or Rs.450 whichever higher" correctly.
+                _full_val_str = " ".join(val_cells) if val_cells else ""
+                if len(_full_val_str) > 5 and ('%' in _full_val_str or 'min' in _full_val_str.lower()):
+                    try:
+                        from knowledge.charge_normalizer import ChargeNormalizer
+                        _normalized = ChargeNormalizer().normalize(_full_val_str, field=mapped_key)
+                        if isinstance(_normalized, dict) and len(_normalized) >= 2:
+                            result_val = _normalized
+                            print(f"[Excel:{sheet_name}]   charge {mapped_key} = {result_val} "
+                                  f"(ChargeNormalizer from '{_full_val_str[:50]}')")
+                            # Don't overwrite a richer dict with a scalar
+                            existing = charges.get(mapped_key)
+                            if existing is None:
+                                charges[mapped_key] = result_val
+                            elif isinstance(result_val, dict) and not isinstance(existing, dict):
+                                charges[mapped_key] = result_val
+                            continue   # skip the vf path below
+                    except Exception:
+                        pass
+
                 if len(vf) >= 2:
-                    # Both v and f found — store as dict
                     result_val = vf
                     print(f"[Excel:{sheet_name}]   charge {mapped_key} = {result_val} "
                           f"(v/f from '{key}' row)")
                 elif len(vf) == 1:
-                    # Only one value — could be percentage or fixed
                     single = list(vf.values())[0]
                     kind = list(vf.keys())[0]
-                    # Charges that are ALWAYS fixed fees (not percentages) — force to f.
-                    # The heuristic puts any value <= 100 into v (assuming percentage),
-                    # but topay/cod/docket/dacc/dod/fm charges are flat Rs amounts.
                     _ALWAYS_FIXED = {"topayCharges","codCharges","docketCharges",
                                      "daccCharges","dodCharges","fmCharges",
                                      "appointmentCharges","prepaidCharges"}
                     if mapped_key in _ALWAYS_FIXED and kind == "v":
-                        # Swap: it's a fixed Rs amount, not a percentage
                         result_val = {"v": 0.0, "f": single}
                         print(f"[Excel:{sheet_name}]   charge {mapped_key} = {result_val} "
                               f"(fixed Rs {single}, not pct)")
                     elif mapped_key in ("fuel", "divisor", "minWeight") or kind == "v":
                         result_val = single
                     else:
-                        result_val = vf  # store as dict even with single key
+                        result_val = vf
                     print(f"[Excel:{sheet_name}]   charge {mapped_key} = {result_val} "
                           f"({'pct' if kind == 'v' else 'fixed'} from '{key}')")
                 else:
@@ -1581,6 +1831,26 @@ class ExcelParser(BaseParser):
                     result_val = plain
                     print(f"[Excel:{sheet_name}]   charge {mapped_key} = {result_val} "
                           f"(scalar from '{key}' / '{val_cells[0]}')")
+
+                # Sanity cap: reject implausibly large fixed charges (e.g. 1728 CFT constant)
+                _EXCEL_CHARGE_MAX = {
+                    "docketCharges": 2000, "daccCharges": 10000,
+                    "codCharges": 5000, "topayCharges": 5000,
+                    "greenTax": 2000, "appointmentCharges": 10000,
+                }
+                if isinstance(result_val, dict):
+                    f_val = result_val.get("f", 0)
+                    cap = _EXCEL_CHARGE_MAX.get(mapped_key)
+                    if cap and f_val and float(f_val) > cap:
+                        print(f"[Excel:{sheet_name}]   REJECTED {mapped_key}.f={f_val} "
+                              f"(exceeds cap {cap}) — likely not a real charge value")
+                        continue
+                elif isinstance(result_val, (int, float)):
+                    cap = _EXCEL_CHARGE_MAX.get(mapped_key)
+                    if cap and float(result_val) > cap and mapped_key not in ("divisor", "minCharges", "minWeight"):
+                        print(f"[Excel:{sheet_name}]   REJECTED {mapped_key}={result_val} "
+                              f"(exceeds cap {cap})")
+                        continue
 
                 # Don't overwrite a dict with a scalar
                 existing = charges.get(mapped_key)
@@ -1607,12 +1877,16 @@ class ExcelParser(BaseParser):
         result = {}
         text_lower = text.lower().strip()
 
-        # Layer 1: exact substring match in CHARGE_MAP
+        # Layer 1: exact substring match in CHARGE_MAP using word boundaries
+        # "gst" matches "gst rate" but NOT "gstin"; "cod" matches "cod service"
         fc4_key = None
         for pattern, ck in sorted(CHARGE_MAP.items(), key=lambda x: len(x[0]), reverse=True):
             if ck is None:
                 continue
-            if pattern in text_lower:
+            if pattern == text_lower:
+                fc4_key = ck
+                break
+            if len(pattern) >= 3 and re.search(r'\b' + re.escape(pattern) + r'\b', text_lower):
                 fc4_key = ck
                 break
 
@@ -1668,10 +1942,18 @@ class ExcelParser(BaseParser):
         Returns {"type": "distance_weight_matrix", "matrix": [...]} or None.
         """
         # Step 1: Locate the ODA matrix header row
+        # Accept any row that has ODA + distance/rate/chart/table signal,
+        # not just "MATRIX" — TCI uses headers like "ODA Rate Chart", "ODA Distance Wise"
+        _ODA_MATRIX_RE = re.compile(
+            r'(?i)\boda\b.{0,40}(?:matrix|chart|rate|table|distance|km|wise|band|slab)',
+        )
+        _ODA_DIST_RE = re.compile(
+            r'(?i)(?:distance|dist|km|kms).{0,40}\boda\b',
+        )
         matrix_header_idx = None
         for ri, row in enumerate(rows):
-            row_text = " ".join(_cell_str(c).upper() for c in row)
-            if "ODA" in row_text and ("MATRIX" in row_text or "RATE MATRIX" in row_text):
+            row_text = " ".join(_cell_str(c) for c in row)
+            if _ODA_MATRIX_RE.search(row_text) or _ODA_DIST_RE.search(row_text):
                 matrix_header_idx = ri
                 break
 
@@ -1861,6 +2143,171 @@ class ExcelParser(BaseParser):
     # Company info parser
     # ------------------------------------------------------------------
 
+    def _try_parse_per_box_handling(
+        self, rows: List[List], sheet_name: str
+    ) -> Optional[Dict]:
+        """
+        Detect per-box / per-carton / per-piece handling charge.
+        Patterns:
+          "Handling charges: Rs.5 per box, minimum Rs.500"
+          "Handling: 5/box, min 500"
+          Row: ["Handling Charges", "5", "per box", "500 minimum"]
+        Returns {"type": "per_box", "perBox": 5.0, "minimum": 500.0} or None.
+        """
+        _PER_BOX_KW = re.compile(
+            r'(?i)per\s*(?:box|carton|piece|pcs?|ctn|pkg|package|unit)',
+        )
+        _HANDLING_KW = re.compile(r'(?i)handling')
+        _MIN_KW = re.compile(r'(?i)(?:min(?:imum)?|floor)')
+
+        for ri, row in enumerate(rows):
+            row_text = " ".join(_cell_str(c) for c in row).lower()
+            if not _HANDLING_KW.search(row_text):
+                continue
+            if not _PER_BOX_KW.search(row_text):
+                continue
+            # Found a per-box handling row — extract perBox rate and minimum
+            nums = re.findall(r'(\d+(?:\.\d+)?)', row_text)
+            floats = [float(n) for n in nums]
+            if not floats:
+                continue
+            # Heuristic: smallest value ≤ 100 = per-box rate; largest value = minimum
+            per_box_rate = min((f for f in floats if f <= 100), default=None)
+            minimum = max((f for f in floats if f > 100), default=None)
+            if per_box_rate is None and floats:
+                per_box_rate = floats[0]
+            result: Dict = {"type": "per_box", "perBox": per_box_rate}
+            if minimum:
+                result["minimum"] = minimum
+            print(f"[Excel:{sheet_name}] Handling per_box: perBox={per_box_rate} minimum={minimum}")
+            return result
+        return None
+
+    def _try_parse_pincode_rate_matrix(
+        self, rows: List[List], sheet_name: str
+    ) -> Optional[Dict]:
+        """
+        Pincode-grounded zone matrix builder.
+
+        Used when the Excel has rows keyed by DESTINATION PINCODE, not zone labels.
+        Structure:
+          Pincode | Rate from N1 | Rate from N2 | Rate from S1 | ...
+          110001  |  2.59        |  3.12        |  4.50        | ...
+          250002  |  3.80        |  2.70        |  5.10        | ...
+
+        Algorithm (reverse-engineering the user's manual approach):
+          1. Detect header with ORIGIN zone tokens in columns 1+
+          2. Detect pincode column (col 0 or marked column)
+          3. For each data row:
+             a. Get destination pincode
+             b. Resolve dest_zone = pincodes.json[pincode]   ← ground truth
+             c. For each origin_zone_col: record rate
+             d. Aggregate per (origin_zone, dest_zone) using median to handle duplicates
+          4. Build and return zone matrix
+
+        This eliminates zone label guessing — dest zone is pincode-grounded.
+        """
+        gv = _get_gv()
+        if not gv:
+            return None  # Can't do pincode lookup without master data
+
+        scan_limit = min(30, len(rows))
+
+        # Step 1: Find header row with ≥ 3 origin zone tokens in columns 1+
+        header_row_idx = None
+        col_origin_zones: Dict[int, str] = {}  # col_idx → single canonical origin zone
+
+        for ri in range(scan_limit):
+            row = rows[ri]
+            temp_cols: Dict[int, str] = {}
+            for ci in range(1, len(row)):
+                cell = _upper(row[ci]).strip()
+                if not cell:
+                    continue
+                # Must be a direct canonical zone — no expansion (avoids false positives)
+                if cell in set(_CANONICAL):
+                    temp_cols[ci] = cell
+                elif cell in ZONE_EXPANSION and len(ZONE_EXPANSION[cell]) == 1:
+                    temp_cols[ci] = ZONE_EXPANSION[cell][0]
+            if len(temp_cols) >= 3:
+                header_row_idx = ri
+                col_origin_zones = temp_cols
+                break
+
+        if header_row_idx is None:
+            return None
+
+        # Step 2: Find pincode column — expect it in col 0 or col before first zone col
+        first_zone_col = min(col_origin_zones.keys())
+        pin_col = first_zone_col - 1  # usually 0
+
+        # Verify: at least 5 valid pincodes in the expected pin_col among next 20 rows
+        verify_rows = rows[header_row_idx + 1: header_row_idx + 25]
+        valid_pin_count = sum(
+            1 for r in verify_rows
+            if len(r) > pin_col and _is_valid_pincode(r[pin_col])
+        )
+        if valid_pin_count < 5:
+            return None  # Not a pincode-keyed sheet
+
+        print(f"[Excel:{sheet_name}] Pincode-rate matrix detected: "
+              f"header_row={header_row_idx}, pin_col={pin_col}, "
+              f"origin_cols={col_origin_zones}")
+
+        # Step 3: Collect all (origin_zone, dest_zone, rate) triples
+        from collections import defaultdict
+        rate_samples: Dict[tuple, list] = defaultdict(list)  # (orig, dest) -> [rates]
+        unknown_pins = 0
+        rows_processed = 0
+
+        for row in rows[header_row_idx + 1:]:
+            if not row or pin_col >= len(row):
+                continue
+            pin = _parse_pincode(row[pin_col])
+            if pin is None:
+                continue
+            rows_processed += 1
+
+            dest_zone = gv.lookup_zone(pin)
+            if not dest_zone:
+                unknown_pins += 1
+                continue
+
+            for ci, orig_zone in col_origin_zones.items():
+                if ci >= len(row):
+                    continue
+                rate = _safe_float(row[ci])
+                if rate is not None and rate > 0:
+                    rate_samples[(orig_zone, dest_zone)].append(rate)
+
+        if unknown_pins:
+            print(f"[Excel:{sheet_name}]   {unknown_pins}/{rows_processed} pincodes "
+                  f"not in master pincodes.json (skipped)")
+
+        if not rate_samples:
+            return None
+
+        # Step 4: Aggregate — use median to be robust against outliers
+        import statistics
+        matrix: Dict[str, Dict[str, float]] = {}
+        for (orig, dest), rates in rate_samples.items():
+            if not rates:
+                continue
+            if orig not in matrix:
+                matrix[orig] = {}
+            agg = round(statistics.median(rates), 2)
+            matrix[orig][dest] = agg
+
+        if len(matrix) < 3:
+            return None
+
+        print(f"[Excel:{sheet_name}] Pincode-grounded zone matrix: "
+              f"{len(matrix)} origins, {rows_processed} pincodes processed")
+        for orig in sorted(matrix.keys())[:4]:
+            sample = dict(list(matrix[orig].items())[:5])
+            print(f"[Excel:{sheet_name}]   {orig}: {sample}")
+        return matrix
+
     def _try_parse_weight_slab(
         self, rows: List[List], sheet_name: str
     ) -> Optional[Dict]:
@@ -2036,6 +2483,13 @@ class ExcelParser(BaseParser):
                         _record_audit("company", key, r.value, r.method, r.confidence, sheet_name)
 
             if mapped_key:
+                # Validate gstNo — reject values that look like charge percentages
+                # e.g. "18% as applicable" from a GST charge row must not become gstNo
+                if mapped_key == "gstNo":
+                    clean = re.sub(r'\s+', '', val).upper()
+                    if not re.match(r'^\d{2}[A-Z]{5}\d{4}[A-Z]\d[A-Z0-9]{2}$', clean):
+                        continue   # not a valid GST number format — skip
+                    val = clean    # store normalized (no spaces)
                 company[mapped_key] = val
 
         if len(company) >= 2:

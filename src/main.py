@@ -379,6 +379,14 @@ def generate_utsf_for_transporter(
 
     t_start = time.time()
 
+    # RC-5: Create one DocumentContext for this entire pipeline run.
+    # Every parser updates it via .absorb(); later parsers can read accumulated state.
+    try:
+        from knowledge.document_context import DocumentContext
+        doc_ctx = DocumentContext()
+    except ImportError:
+        doc_ctx = None
+
     print(f"\n{DIVIDER}")
     print(f"Processing: {transporter_name}")
     print(f"{DIVIDER}")
@@ -397,6 +405,35 @@ def generate_utsf_for_transporter(
     for i, f in enumerate(files, 1):
         rel = os.path.relpath(f, folder)
         print(f"    [{i}] {rel}")
+
+    # ------------------------------------------------------------------
+    # 1b. Phase 0: Anchor pre-scan (plan Feature 2)
+    # Quick first-pass over all JSON/text files to build GlobalState before
+    # per-file parsing runs. Only scans text-extractable files (skips images).
+    # ------------------------------------------------------------------
+    global_state: Dict = {}
+    try:
+        from parsers.anchor_detector import AnchorDetector
+        _anchor_texts = []
+        for _fp in files:
+            _ext = os.path.splitext(_fp)[1].lower()
+            if _ext == ".json":
+                try:
+                    with open(_fp, encoding="utf-8") as _f:
+                        _anchor_texts.append(str(json.load(_fp)))
+                except Exception:
+                    pass
+            # For non-image files, a fast text peek (first 2000 chars only)
+            elif _ext not in (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"):
+                try:
+                    with open(_fp, encoding="utf-8", errors="replace") as _f:
+                        _anchor_texts.append(_f.read(3000))
+                except Exception:
+                    pass
+        if _anchor_texts:
+            global_state = AnchorDetector().scan("\n".join(_anchor_texts))
+    except Exception as _e:
+        print(f"  [AnchorDetector] Skipped: {_e}")
 
     # ------------------------------------------------------------------
     # 2. Parse all files
@@ -441,7 +478,7 @@ def generate_utsf_for_transporter(
         print(f"    Parser: {type(parser).__name__}")
 
         try:
-            result = parser.parse(file_path)
+            result = parser.parse(file_path, doc_context=doc_ctx)
             piece  = result.get("data", {})
             extracted_pieces.append(piece)
 
@@ -515,6 +552,33 @@ def generate_utsf_for_transporter(
     # ------------------------------------------------------------------
     print(f"\n  --- Merging {len(extracted_pieces)} data pieces ---")
     merged = merge_extracted_data(extracted_pieces)
+
+    # Feature 2: Inject GlobalState from AnchorDetector
+    if global_state:
+        merged["_globalState"] = global_state
+        # Promote minWeight to charges if not already extracted
+        if global_state.get("minWeight") and not merged.get("charges", {}).get("minWeight"):
+            merged.setdefault("charges", {})["minWeight"] = global_state["minWeight"]
+        # Promote transportMode to company_details
+        if global_state.get("transportMode") and not merged.get("company_details", {}).get("transportMode"):
+            merged.setdefault("company_details", {})["transportMode"] = global_state["transportMode"]
+
+    # RC-5: Inject DocumentContext into merged data for encoder and audit trail
+    if doc_ctx:
+        ctx_dict = doc_ctx.as_dict()
+        merged["_documentContext"] = ctx_dict
+        # Promote transport_mode if not already in company_details
+        if ctx_dict.get("transportMode") and not merged.get("charges", {}).get("transportMode"):
+            merged.setdefault("company_details", {}).setdefault(
+                "transportMode", ctx_dict["transportMode"]
+            )
+        if ctx_dict.get("effectiveDate"):
+            merged.setdefault("company_details", {}).setdefault(
+                "effectiveDate", ctx_dict["effectiveDate"]
+            )
+        print(f"  Document context: mode={ctx_dict.get('transportMode')}, "
+              f"date={ctx_dict.get('effectiveDate')}, "
+              f"notes={len(ctx_dict.get('footerNotes', []))}")
 
     # ------------------------------------------------------------------
     # 4. Apply ML Enhancement (if available)

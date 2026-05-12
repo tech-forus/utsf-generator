@@ -87,16 +87,28 @@ class ZoneMapper:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
+        # city+state → pincodes index (used for serviceability range inference)
+        self._city_state_to_pincodes: Dict[tuple, Set[int]] = defaultdict(set)
+        self._state_to_pincodes:      Dict[str, Set[int]]   = defaultdict(set)
+
         for entry in data:
             try:
-                pin = int(entry["pincode"])
+                pin  = int(entry["pincode"])
                 zone = entry["zone"].upper().strip()
                 self.pincode_to_zone[pin] = zone
                 self.zone_to_pincodes[zone].add(pin)
+                city  = entry.get("city",  "").upper().strip()
+                state = entry.get("state", "").upper().strip()
+                if city and state:
+                    self._city_state_to_pincodes[(city, state)].add(pin)
+                if state:
+                    self._state_to_pincodes[state].add(pin)
             except (KeyError, ValueError):
                 continue
 
-        print(f"[ZoneMapper] Loaded {len(self.pincode_to_zone):,} pincodes across {len(self.zone_to_pincodes)} zones")
+        print(f"[ZoneMapper] Loaded {len(self.pincode_to_zone):,} pincodes across "
+              f"{len(self.zone_to_pincodes)} zones, "
+              f"{len(self._city_state_to_pincodes)} city/state combos")
         # Lazy-load GeoValidator for impossibility checks
         try:
             from knowledge.geo_validator import GeoValidator
@@ -151,6 +163,78 @@ class ZoneMapper:
             return candidates[0]
 
         return None  # Unknown zone label
+
+    def infer_city_coverage(self, served_pincodes: List[int]) -> List[int]:
+        """
+        State-level Coverage Inference — fixes the serviceability gap.
+
+        Problem: A transporter lists only depot/hub pincodes (e.g. 3 pincodes
+        for Delhi). System records only those 3 → 1% N1 coverage vs reality 80%+.
+
+        Solution: If a transporter has >= 2 pincodes from the same state, infer
+        they serve that state's entire zone-set within pincodes.json.
+
+        Uses STATE not city because pincodes.json 'city' is postal district
+        (CENTRAL, WEST) not a human city name. State-level is more reliable.
+
+        Threshold: >= 2 pincodes from same state → expand to all pincodes in
+        that state (prevents single misassigned pincode from over-expanding).
+
+        Conservative safety: caps expansion at states with <= 3000 pincodes
+        in master db (avoids over-expanding huge states like UP/Maharashtra
+        where only select hubs may be served).
+        """
+        if not served_pincodes:
+            return served_pincodes
+
+        # Reverse-map: pin → state
+        pin_to_state: Dict[int, str] = {}
+        for entry_pin, entry_state_city in (
+            (p, next(
+                ((c, s) for (c, s), pins in self._city_state_to_pincodes.items() if p in pins),
+                (None, None)
+            ))
+            for p in served_pincodes
+        ):
+            _, state = entry_state_city
+            if state:
+                pin_to_state[entry_pin] = state
+
+        # Count pincodes per state
+        state_hits: Dict[str, int] = defaultdict(int)
+        for pin in served_pincodes:
+            s = pin_to_state.get(pin)
+            if s:
+                state_hits[s] += 1
+
+        expanded = set(served_pincodes)
+        expanded_states = []
+
+        for state, hits in state_hits.items():
+            if hits < 2:
+                continue
+            state_pincodes = self._state_to_pincodes.get(state, set())
+            # Guard 1: only expand if state has <= 4000 pincodes in master
+            if len(state_pincodes) > 4000:
+                continue
+            # Guard 2: only expand if all state pincodes map to <= 2 canonical zones
+            # (prevents over-expanding Maharashtra: W1+W2+C1+S2 = 4 zones)
+            state_zones = {self.pincode_to_zone.get(p) for p in state_pincodes
+                           if self.pincode_to_zone.get(p)} - {None}
+            if len(state_zones) > 2:
+                continue
+            before = len(expanded)
+            expanded |= state_pincodes
+            added = len(expanded) - before
+            if added > 0:
+                expanded_states.append(f"{state}(+{added})")
+
+        if expanded_states:
+            print(f"[ZoneMapper.infer_city_coverage] State expansion: {expanded_states}")
+            print(f"[ZoneMapper.infer_city_coverage] "
+                  f"{len(served_pincodes):,} -> {len(expanded):,} pincodes")
+
+        return list(expanded)
 
     def all_zone_pincodes(self) -> Dict[str, Set[int]]:
         """Return full zone → pincodes mapping."""
@@ -214,6 +298,17 @@ class ZoneMapper:
                 print(f"[ZoneMapper] Removed {len(oda_pincodes)-len(valid_oda)} "
                       f"invalid-format ODA pincodes")
             oda_pincodes = valid_oda
+
+        # City inference: ONLY when a transporter has listed a very small number
+        # of depot/hub pincodes (< 20). This covers cases like TCI listing 3 Delhi
+        # depot pincodes → we infer they serve all of Delhi.
+        #
+        # 20 is a deliberate hard cap:
+        #   - 3-19 pincodes = clearly a depot list, expand is appropriate
+        #   - 20+ pincodes = the transporter made an explicit serviceability list;
+        #     expand would corrupt it (e.g. Gati KWE: 500 pincodes → 9,893 wrong)
+        if 0 < len(served_pincodes) < 20:
+            served_pincodes = self.infer_city_coverage(served_pincodes)
 
         served_set = set(served_pincodes)
         oda_set    = set(oda_pincodes)

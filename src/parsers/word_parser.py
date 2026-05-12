@@ -15,7 +15,7 @@ from parsers.base_parser import BaseParser
 class WordParser(BaseParser):
     SUPPORTED_EXTENSIONS = [".docx"]
 
-    def parse(self, file_path: str) -> Dict[str, Any]:
+    def parse(self, file_path: str, doc_context=None) -> Dict[str, Any]:
         try:
             from docx import Document
         except ImportError:
@@ -58,7 +58,6 @@ class WordParser(BaseParser):
             full_text += "\n\n--- Tables ---\n" + table_text
 
         # ── Auto-detect structured data from tables ────────────────────────────
-        # Reuse Excel parser's detection logic (same row/col format)
         data = {}
         if sheets:
             try:
@@ -66,6 +65,44 @@ class WordParser(BaseParser):
                 data = ExcelParser()._auto_detect(sheets)
             except Exception:
                 pass
+
+        # ── Charge extraction from paragraph text ─────────────────────────────
+        # Word docs often have charges as numbered/bulleted lists in paragraph
+        # text, not in tables. Run PDF-style free-text extraction on body text.
+        if text_body:
+            try:
+                from parsers.pdf_parser import PDFParser
+                _pp = PDFParser.__new__(PDFParser)
+                # Section-filter first to avoid T&C ghost values
+                try:
+                    from knowledge.section_segmenter import SectionSegmenter
+                    _seg = SectionSegmenter()
+                    _sections = _seg.segment_text(text_body)
+                    _sm = _seg.get_sections_map(_sections)
+                    _charge_text = ""
+                    for _cat in ("CHARGES", "MIXED", "UNKNOWN", "ZONE_MATRIX"):
+                        for _sec in _sm.get(_cat, []):
+                            _charge_text += "\n" + _sec.text
+                    if not _charge_text.strip():
+                        _charge_text = text_body
+                except Exception:
+                    _charge_text = text_body
+
+                text_charges = _pp._extract_charges_from_text(_charge_text)
+                if text_charges:
+                    data.setdefault("charges", {})
+                    for k, v in text_charges.items():
+                        data["charges"].setdefault(k, v)
+
+                # Company info from paragraph text (GST, PAN, phone, email)
+                cd_text = _pp._extract_company_from_text(text_body)
+                if cd_text:
+                    data.setdefault("company_details", {})
+                    for k, v in cd_text.items():
+                        if k not in data["company_details"]:
+                            data["company_details"][k] = v
+            except Exception as _wp_err:
+                print(f"[WordParser] Text extraction error: {_wp_err}")
 
         return {
             "text": full_text,

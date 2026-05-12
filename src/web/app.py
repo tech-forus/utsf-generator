@@ -5,6 +5,7 @@ Flask app serving the web interface on localhost:5000
 
 import os
 import sys
+import re
 import json
 import subprocess
 import tempfile
@@ -130,11 +131,16 @@ SORT_KEYWORDS = {
         "company", "vendor", "transporter", "profile", "info", "details",
         "contact", "gst", "pan", "cin", "registration", "address", "about",
         "overview", "kyc", "onboard",
+        # Proposal documents contain company info even if they also have rates
+        "proposal", "agreement", "contract", "letter", "quotation", "quote",
+        "certificate", "incorporation", "license", "approval", "kyc",
     ],
     "charges": [
         "rate", "rates", "charge", "charges", "price", "pricing", "tariff",
-        "fuel", "docket", "oda", "rov", "insurance", "handling", "freight",
+        "fuel", "docket", "oda", "rov", "insurance", "handling",
         "surcharge", "fee", "fees", "cost", "invoice", "billing",
+        # "freight" removed — too generic, appears in proposals too
+        # "tariff" kept — unambiguous charge-only term
     ],
     "zone_data": [
         "zone", "zones", "pincode", "pincodes", "serviceability", "service",
@@ -143,35 +149,51 @@ SORT_KEYWORDS = {
     ],
 }
 
+# Files that contain BOTH company info AND charges — put in company_details
+# (the parser scans all subfolders anyway; company_details is the primary sort)
+_PROPOSAL_SIGNALS = re.compile(
+    r'(?i)(proposal|agreement|contract|quotat|quote|letter\s*of|'
+    r'loi\b|mou\b|nda\b|onboard|kyc|profile)',
+    re.I
+)
+
 def auto_classify_file(filename: str) -> str:
     """
     Auto-classify a file into company_details / charges / zone_data
     based on filename keywords. Returns the best-match subfolder.
     """
     name_lower = os.path.splitext(filename)[0].lower()
-    # Replace common separators with spaces
     name_clean = name_lower.replace("_", " ").replace("-", " ").replace(".", " ")
     words = set(name_clean.split())
+
+    # Hard override: proposal/contract/agreement documents always go to
+    # company_details regardless of other keywords (e.g. "TCI Freight Proposal"
+    # has "Freight" which would otherwise score as charges).
+    if _PROPOSAL_SIGNALS.search(name_clean):
+        return "company_details"
+
+    # Hard override: pincodes/serviceability files always go to zone_data
+    if any(kw in name_clean for kw in ("pincode", "pincodes", "serviceable",
+                                        "serviceability", "coverage", "network")):
+        return "zone_data"
 
     scores = {sub: 0 for sub in SUBFOLDERS}
     for sub, keywords in SORT_KEYWORDS.items():
         for kw in keywords:
             if kw in name_clean:
-                # Exact substring match
                 scores[sub] += 2
             for w in words:
                 if kw in w or w in kw:
                     scores[sub] += 1
 
     best = max(scores, key=lambda s: scores[s])
-    # If no signal at all, use file extension as tiebreaker
     if scores[best] == 0:
         ext = os.path.splitext(filename)[1].lower()
         if ext in (".png", ".jpg", ".jpeg"):
-            return "company_details"  # Logo / stamp photos
+            return "company_details"
         if ext in (".pptx", ".ppt"):
-            return "charges"   # Presentation = rate card deck
-        return "charges"  # Most common default
+            return "charges"
+        return "charges"
 
     return best
 
@@ -327,7 +349,58 @@ def create_transporter():
         tid = _next_transporter_id()
         with open(id_file, "w") as f:
             f.write(tid)
+
+    # Persist any meta fields supplied at creation time into company_meta.json.
+    # The parser merge pipeline reads this JSON automatically — no special wiring needed.
+    meta_fields = {}
+    for field in ("customerID", "gstNo", "address", "state", "city",
+                  "pincode", "contactPhone", "contactEmail"):
+        val = request.form.get(field, "").strip()
+        if val:
+            meta_fields[field] = val
+    if meta_fields:
+        meta_fields["companyName"] = name  # anchor for merge
+        meta_path = os.path.join(folder, "company_details", "company_meta.json")
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump({"company_details": meta_fields}, f, indent=2)
+
     return redirect(url_for("transporter_detail", name=safe))
+
+
+@app.post("/api/transporter/<name>/set-meta")
+def set_transporter_meta(name: str):
+    """
+    Update/patch company meta fields (customerID, address, gstNo, etc.)
+    after the transporter was created.  Merges into company_meta.json.
+    """
+    folder = os.path.join(TRANSPORTERS, name)
+    if not os.path.isdir(folder):
+        return jsonify({"ok": False, "error": "Transporter not found"}), 404
+
+    data = request.get_json(force=True) or {}
+    allowed = {"customerID", "gstNo", "address", "state", "city",
+               "pincode", "contactPhone", "contactEmail", "companyName"}
+    patch = {k: v for k, v in data.items() if k in allowed and v}
+    if not patch:
+        return jsonify({"ok": False, "error": "No valid fields provided"}), 400
+
+    meta_path = os.path.join(folder, "company_details", "company_meta.json")
+    existing = {}
+    if os.path.isfile(meta_path):
+        try:
+            existing = json.load(open(meta_path, encoding="utf-8"))
+        except Exception:
+            existing = {}
+
+    inner = existing.get("company_details", {})
+    inner.update(patch)
+    existing["company_details"] = inner
+
+    os.makedirs(os.path.dirname(meta_path), exist_ok=True)
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(existing, f, indent=2)
+
+    return jsonify({"ok": True, "updated": list(patch.keys())})
 
 
 # ─── Routes: Transporter Detail ───────────────────────────────────────────────
@@ -612,6 +685,192 @@ def download_output(name: str):
     return send_file(path, as_attachment=True,
                      download_name=f"{safe}.utsf.json",
                      mimetype="application/json")
+
+
+@app.get("/api/output/<name>/needs-manual-input")
+def output_needs_manual_input(name: str):
+    """
+    Returns fields that could not be auto-extracted and need user entry.
+    Frontend uses this to render prompts after generation completes.
+    """
+    safe = _safe_name(name)
+    path = os.path.join(OUTPUT_DIR, f"{safe}.utsf.json")
+    if not os.path.exists(path):
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    try:
+        with open(path, encoding="utf-8") as f:
+            utsf = json.load(f)
+        from builder.fc4_encoder import FC4Encoder
+        fields = FC4Encoder.needs_manual_input(utsf)
+        return jsonify({"ok": True, "fields": fields})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.get("/api/output/<name>/review")
+def output_review_data(name: str):
+    """
+    HITL review data: returns all extracted fields with confidence scores,
+    flagged fields (low-confidence / missing), and parse audit entries.
+    Frontend uses this to render the side-by-side review screen.
+    """
+    safe = _safe_name(name)
+    path = os.path.join(OUTPUT_DIR, f"{safe}.utsf.json")
+    if not os.path.exists(path):
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    try:
+        with open(path, encoding="utf-8") as f:
+            utsf = json.load(f)
+
+        meta   = utsf.get("meta", {})
+        pr     = utsf.get("pricing", {}).get("priceRate", {})
+        audit  = utsf.get("_parseAudit", [])
+
+        # Build confidence map from parse audit (raw label → confidence)
+        conf_map = {}
+        for entry in audit:
+            canon = entry.get("matched") or entry.get("canonical")
+            if canon:
+                conf_map[canon] = max(conf_map.get(canon, 0), entry.get("confidence", 0))
+
+        def _field_status(val, field_name):
+            if val is None or val == "" or val == 0.0:
+                return "missing"
+            conf = conf_map.get(field_name, 1.0)
+            if conf < 0.75:
+                return "uncertain"
+            return "ok"
+
+        # Meta fields review
+        meta_review = []
+        for field, label, required in [
+            ("companyName",  "Company Name",    True),
+            ("gstNo",        "GST Number",      False),
+            ("address",      "Address",         False),
+            ("state",        "State",           False),
+            ("city",         "City",            False),
+            ("pincode",      "Pincode",         False),
+            ("contactPhone", "Contact Phone",   False),
+            ("contactEmail", "Contact Email",   False),
+            ("customerID",   "Customer ID",     True),
+            ("vendorCode",   "Vendor Code",     False),
+        ]:
+            val = meta.get(field)
+            meta_review.append({
+                "field":      field,
+                "label":      label,
+                "value":      val,
+                "required":   required,
+                "status":     _field_status(val, field),
+                "confidence": conf_map.get(field, 1.0 if val else 0.0),
+            })
+
+        # Charge fields review
+        charge_review = []
+        for field, label, expected_range in [
+            ("docketCharges", "Docket / LR Charges",  (50, 500)),
+            ("fuel",          "Fuel Surcharge %",      (10, 50)),
+            ("minCharges",    "Minimum Charges",       (100, 2000)),
+            ("divisor",       "Volumetric Divisor",    (2000, 8000)),
+            ("gst",           "GST %",                 (5, 28)),
+            ("daccCharges",   "DACC Charges",          (50, 1000)),
+            ("greenTax",      "Green Tax",             (0, 200)),
+        ]:
+            val = pr.get(field)
+            status = _field_status(val, field)
+            # Sanity range check: flag if outside expected range
+            if status == "ok" and val is not None and isinstance(val, (int, float)):
+                lo, hi = expected_range
+                if not (lo <= val <= hi):
+                    status = "suspicious"
+            charge_review.append({
+                "field":         field,
+                "label":         label,
+                "value":         val,
+                "status":        status,
+                "confidence":    conf_map.get(field, 1.0 if val else 0.0),
+                "expectedRange": expected_range,
+            })
+
+        # Parse audit uncertain matches
+        uncertain = [
+            e for e in audit
+            if e.get("confidence", 1.0) < 0.80 and e.get("method") not in ("exact",)
+        ]
+
+        return jsonify({
+            "ok":            True,
+            "transporterName": name,
+            "dataQuality":   utsf.get("dataQuality", 0),
+            "metaReview":    meta_review,
+            "chargeReview":  charge_review,
+            "uncertainMatches": uncertain[:20],
+            "sourceFiles":   utsf.get("sourceFiles", []),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.patch("/api/output/<name>/field")
+def patch_utsf_field(name: str):
+    """
+    HITL field correction: update a single field in the generated UTSF.
+    Body: {"path": "meta.gstNo", "value": "17AKMPC4432C1ZL"}
+    The correction is also fed back to the learning system.
+    """
+    safe = _safe_name(name)
+    path = os.path.join(OUTPUT_DIR, f"{safe}.utsf.json")
+    if not os.path.exists(path):
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    try:
+        data = request.get_json(force=True) or {}
+        field_path = data.get("path", "")    # e.g. "meta.gstNo"
+        new_value  = data.get("value")
+        if not field_path:
+            return jsonify({"ok": False, "error": "path required"}), 400
+
+        with open(path, encoding="utf-8") as f:
+            utsf = json.load(f)
+
+        # Navigate and set the field
+        parts = field_path.split(".")
+        obj = utsf
+        for part in parts[:-1]:
+            obj = obj.setdefault(part, {})
+        old_value = obj.get(parts[-1])
+        obj[parts[-1]] = new_value
+
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(utsf, f, indent=2, ensure_ascii=False)
+
+        # Feed correction back to learning system
+        try:
+            _learn_from_correction(field_path, old_value, new_value, name)
+        except Exception:
+            pass
+
+        return jsonify({"ok": True, "path": field_path, "old": old_value, "new": new_value})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+def _learn_from_correction(field_path: str, old_val, new_val, transporter: str):
+    """
+    Feed a HITL correction into the learning system.
+    If the field is a charge field, record the mapping so future documents
+    with the same source label map to the correct field.
+    """
+    if not field_path.startswith("pricing.priceRate."):
+        return
+    charge_field = field_path.replace("pricing.priceRate.", "")
+    try:
+        utsf_root = os.environ.get("UTSF_ROOT", os.path.join(os.path.dirname(__file__), "..", ".."))
+        sys.path.insert(0, os.path.join(utsf_root, "src"))
+        from knowledge.ml_dictionary_engine import record_passive_confirmation
+        record_passive_confirmation("charge", charge_field, charge_field, confidence=0.95)
+        print(f"[HITL] Correction fed to learning: {field_path} = {new_val} (was {old_val})")
+    except Exception:
+        pass
 
 
 @app.delete("/output/<name>")
@@ -987,6 +1246,11 @@ def api_extract_prices():
             result = parser.parse(tmp_path)
             text_for_ai = result.get("text", "")
             parse_source = "pdf"
+            # Try to use zone_matrix already extracted by the parser before going to AI
+            pdf_zone_matrix = result.get("data", {}).get("zone_matrix") or {}
+            if pdf_zone_matrix:
+                zone_rates = pdf_zone_matrix
+                confidence = 65  # lower than Excel since PDF extraction is lossy
 
         elif ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"):
             from parsers.image_parser import ImageParser
@@ -994,6 +1258,11 @@ def api_extract_prices():
             result = parser.parse(tmp_path)
             text_for_ai = result.get("text", "")
             parse_source = "image_ocr"
+            # Same — check for directly extracted zone matrix
+            img_zone_matrix = result.get("data", {}).get("zone_matrix") or {}
+            if img_zone_matrix:
+                zone_rates = img_zone_matrix
+                confidence = 55  # OCR accuracy lower than digital PDF
 
         elif ext in (".docx", ".doc"):
             from parsers.word_parser import WordParser
@@ -1001,6 +1270,10 @@ def api_extract_prices():
             result = parser.parse(tmp_path)
             text_for_ai = result.get("text", "")
             parse_source = "word"
+            word_zone_matrix = result.get("data", {}).get("zone_matrix") or {}
+            if word_zone_matrix:
+                zone_rates = word_zone_matrix
+                confidence = 60
 
         else:
             return jsonify({"error": f"Parser not available for {ext}"}), 422

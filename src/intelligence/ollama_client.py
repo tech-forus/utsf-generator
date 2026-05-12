@@ -20,8 +20,11 @@ import urllib.request
 import urllib.error
 
 
-OLLAMA_BASE = "http://localhost:11434"
-DEFAULT_MODEL = "qwen2.5-coder:3b"
+import os as _os
+# RC-5: configurable via env var for Railway deployment where Ollama runs as a
+# separate service (not localhost). Set OLLAMA_URL in Railway environment variables.
+OLLAMA_BASE   = _os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+DEFAULT_MODEL = _os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:3b")
 FALLBACK_MODELS = ["qwen2.5:3b", "llama3.2:3b", "llama3.1:8b", "mistral:7b"]
 
 

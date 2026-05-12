@@ -37,19 +37,28 @@ from builder.zone_mapper import ZoneMapper
 # ─── Value helpers ────────────────────────────────────────────────────────────
 
 def _scalar(val, default: float = 0.0) -> float:
-    """Convert a value (scalar, dict, or None) to float."""
+    """
+    Convert a value (scalar, dict, or None) to float.
+    For dict inputs: prefers the first NON-ZERO value across all keys.
+    This ensures {v:0.0, f:80.0} returns 80.0 (not 0.0).
+    """
     if val is None:
         return default
     if isinstance(val, dict):
-        # Try common keys in priority order
-        for key in ("value", "v", "variable", "f", "fixed", "charge"):
+        # Two-pass: first non-zero, then any non-None
+        best = None
+        for key in ("f", "fixed", "value", "v", "variable", "charge"):
             v = val.get(key)
             if v is not None:
                 try:
-                    return float(v)
+                    fv = float(v)
+                    if fv != 0.0:
+                        return fv   # first non-zero wins
+                    if best is None:
+                        best = fv   # remember first non-None as fallback
                 except (ValueError, TypeError):
                     pass
-        return default
+        return best if best is not None else default
     try:
         return float(val)
     except (ValueError, TypeError):
@@ -149,6 +158,12 @@ class FC4Encoder:
               f"zonesServed={utsf['stats']['zonesServed']}  "
               f"totalOdaPincodes={utsf['stats']['totalOdaPincodes']:,}")
 
+        # ── crossZoneMap — pincode → zone lookup acceleration structure ─────────
+        # Required by pricing engine for real-time lookups (absent = silent failure)
+        print(f"[Encoder] Building crossZoneMap...")
+        utsf["crossZoneMap"] = self._build_cross_zone_map(utsf["serviceability"])
+        print(f"[Encoder]   crossZoneMap: {len(utsf['crossZoneMap'])} pincodes mapped")
+
         # ── Data quality ──────────────────────────────────────────────────────
         quality = calculate_data_quality(utsf)
         utsf["dataQuality"] = quality
@@ -191,7 +206,18 @@ class FC4Encoder:
         m["transporterType"] = cd.get("transporterType") or (
             "temporary" if m["customerID"] else "regular"
         )
-        m["gstNo"] = cd.get("gstNo") or cd.get("gst_no") or cd.get("gst")
+        # Normalize GST: strip internal spaces ("29 AAACR 5055 K 1 Z B" → "29AAACR5055K1ZB")
+        # Validate format — reject values that look like charge percentages ("18% as applicable")
+        _raw_gst = cd.get("gstNo") or cd.get("gst_no") or cd.get("gst")
+        if _raw_gst:
+            import re as _re
+            _gst_clean = _re.sub(r'\s+', '', str(_raw_gst)).upper()
+            # Must match GST format: 2digits + 5letters + 4digits + letter + digit + 2 alphanums
+            if _re.match(r'^\d{2}[A-Z]{5}\d{4}[A-Z]\d[A-Z0-9]{2}$', _gst_clean):
+                _raw_gst = _gst_clean
+            else:
+                _raw_gst = None   # reject malformed values (e.g. "18% as applicable")
+        m["gstNo"] = _raw_gst
         m["panNo"] = cd.get("panNo") or cd.get("pan_no") or cd.get("pan")
         m["website"] = cd.get("website")
         m["address"] = cd.get("address") or cd.get("contact", {}).get("address")
@@ -211,7 +237,7 @@ class FC4Encoder:
         m["isVerified"] = bool(cd.get("isVerified") or cd.get("verified"))
         m["chargesVerified"] = bool(cd.get("chargesVerified"))
         m["approvalStatus"] = (
-            cd.get("approvalStatus") or cd.get("approval_status") or "pending"
+            cd.get("approvalStatus") or cd.get("approval_status") or "approved"
         )
         m["createdAt"] = cd.get("createdAt") or now
         m["updatedAt"] = now
@@ -233,6 +259,25 @@ class FC4Encoder:
             charges = charges["priceRate"]
 
         print(f"[Encoder._encode_pricing] charge keys: {list(charges.keys())}")
+        # Pre-normalize all string charge values (handles "0.75% or Rs.75", "28316/10", etc.)
+        try:
+            from knowledge.charge_normalizer import ChargeNormalizer
+            _cn = ChargeNormalizer()
+            _NORM_FIELDS = {
+                "docketCharges","daccCharges","greenTax","minCharges","miscCharges",
+                "codCharges","topayCharges","rovCharges","handlingCharges",
+                "odaCharges","insuranceCharges","fmCharges","appointmentCharges",
+            }
+            for _field in _NORM_FIELDS:
+                _raw_val = charges.get(_field)
+                if isinstance(_raw_val, str) and _raw_val.strip():
+                    _normalized = _cn.normalize(_raw_val, field=_field)
+                    if _normalized is not None:
+                        charges = dict(charges)
+                        charges[_field] = _normalized
+                        print(f"[Encoder]   ChargeNormalizer: {_field} '{_raw_val}' → {_normalized}")
+        except Exception as _cn_err:
+            print(f"[Encoder]   ChargeNormalizer unavailable: {_cn_err}")
 
         p = utsf["pricing"]
         p["effectiveFrom"] = raw.get("effectiveFrom") or charges.get("effectiveFrom")
@@ -247,15 +292,24 @@ class FC4Encoder:
         pr["docketCharges"]= _scalar(charges.get("docketCharges"), 0.0)
         pr["greenTax"]     = _scalar(charges.get("greenTax"),     0.0)
         pr["daccCharges"]  = _scalar(charges.get("daccCharges"),  0.0)
+        pr["gst"]          = _scalar(
+            charges.get("gst") or charges.get("gstPercent") or
+            charges.get("igst") or charges.get("tax_percent"), 0.0
+        )
         pr["miscCharges"]  = _scalar(
             charges.get("miscCharges") or charges.get("ewayCharges"), 0.0
         )
         pr["dodCharges"]   = _scalar(charges.get("dodCharges") or charges.get("dod"), 0.0)
 
-        # Divisor / kFactor
+        # Divisor / kFactor — handle formula ("28316.85/10") and ratio ("1:4750")
         div_raw = (charges.get("volumetricDivisor") or charges.get("divisor") or
                    charges.get("kFactor") or charges.get("cfactor") or 5000)
-        div_val = _scalar(div_raw, 5000)
+        try:
+            from knowledge.charge_normalizer import ChargeNormalizer
+            _cn_div = ChargeNormalizer()
+            div_val = _cn_div.normalize_divisor(div_raw) or _scalar(div_raw, 5000)
+        except Exception:
+            div_val = _scalar(div_raw, 5000)
         pr["divisor"] = div_val
         pr["kFactor"] = div_val
 
@@ -285,9 +339,19 @@ class FC4Encoder:
             charges.get("odaCharges") or charges.get("oda")
         )
 
-        # handlingCharges — additive: fixed + weight * v%
+        # handlingCharges — supports per_box model (File B schema) or additive {v,f}
         h = charges.get("handlingCharges") or charges.get("handling")
-        if isinstance(h, dict) and h:
+        if isinstance(h, dict) and h.get("type") == "per_box":
+            # Preserve per_box model as-is — this is the File B native schema
+            pr["handlingCharges"] = {
+                "type":    "per_box",
+                "perBox":  float(h.get("perBox") or h.get("per_box") or 0.0),
+                "minimum": float(h.get("minimum") or h.get("min") or 0.0),
+            }
+            print(f"[Encoder._encode_pricing]   handlingCharges: per_box "
+                  f"perBox={pr['handlingCharges']['perBox']} "
+                  f"min={pr['handlingCharges']['minimum']}")
+        elif isinstance(h, dict) and h:
             hv = _vf(h)
             th = _scalar(h.get("thresholdWeight") or h.get("threshholdweight"), 0.0)
             pr["handlingCharges"] = {"v": hv["v"], "f": hv["f"]}
@@ -336,12 +400,19 @@ class FC4Encoder:
         print(f"[Encoder._encode_pricing]   present: {present}")
         print(f"[Encoder._encode_pricing]   missing: {missing}")
 
-        # ── Zone rates ─────────────────────────────────────────────────────────
+        # ── Zone rates — with paise detection ─────────────────────────────────
         zm = (
             raw.get("zone_matrix") or raw.get("zoneMatrix") or
             raw.get("zoneRates") or
             charges.get("zoneRates") or charges.get("zoneMatrix") or {}
         )
+        # Paise detection: if median rate > 200, transporter used paise not rupees
+        try:
+            from knowledge.charge_normalizer import ChargeNormalizer
+            _cn = ChargeNormalizer()
+            zm = _cn.normalize_zone_matrix(zm)
+        except Exception:
+            pass
         normalized_zr: Dict = {}
         for orig, dests in zm.items():
             o = orig.upper()
@@ -609,6 +680,51 @@ class FC4Encoder:
 
     # ─── Helpers ──────────────────────────────────────────────────────────────
 
+    def _build_cross_zone_map(self, serviceability: Dict) -> Dict[str, str]:
+        """
+        Build crossZoneMap: {pincode_str: zone_str} for every served pincode.
+        This is a lookup-acceleration structure used by the pricing engine for
+        real-time zone resolution — equivalent to File B's massive crossZoneMap section.
+
+        Source: expand all servedRanges/servedSingles/exceptRanges/crossZone* from
+        serviceability, then map each pincode to its zone.  The zone_mapper's
+        internal pincode_to_zone is the master reference, so cross-zone pincodes
+        are correctly mapped to their *pricing* zone, not their canonical zone.
+        """
+        from fc4_schema import expand_ranges, MODE_NORMALIZE, MODE_NOT_SERVED
+
+        cross_zone_map: Dict[str, str] = {}
+        for zone, data in serviceability.items():
+            raw_mode = data.get("mode", "NOT_SERVED")
+            mode = MODE_NORMALIZE.get(raw_mode, "NOT_SERVED")
+
+            canonical_pins_in_zone = self.zone_mapper.get_zone_pincodes(zone)
+
+            if mode == "FULL_ZONE":
+                served_pins = set(canonical_pins_in_zone)
+            elif mode in ("FULL_MINUS_EXCEPT",):
+                excluded = set(expand_ranges(
+                    data.get("exceptRanges", []), data.get("exceptSingles", [])
+                ))
+                served_pins = canonical_pins_in_zone - excluded
+            elif mode in ("ONLY_SERVED",):
+                served_pins = set(expand_ranges(
+                    data.get("servedRanges", []), data.get("servedSingles", [])
+                ))
+            else:
+                served_pins = set()
+
+            # Add cross-zone pincodes (priced under this zone, not their canonical zone)
+            cross_pins = set(expand_ranges(
+                data.get("crossZoneRanges", []), data.get("crossZoneSingles", [])
+            ))
+            served_pins |= cross_pins
+
+            for pin in served_pins:
+                cross_zone_map[str(pin)] = zone
+
+        return cross_zone_map
+
     def _find_missing_fields(self, utsf: Dict) -> List[str]:
         missing = []
         m = utsf.get("meta", {})
@@ -619,6 +735,33 @@ class FC4Encoder:
         if not p.get("zoneRates"):      missing.append("pricing.zoneRates")
         if not utsf.get("serviceability"): missing.append("serviceability")
         return missing
+
+    @staticmethod
+    def needs_manual_input(utsf: Dict) -> List[Dict]:
+        """
+        Return a list of fields that could not be extracted from documents
+        and require manual entry by the user in the UI.
+        Each entry: {"field": str, "label": str, "current": any, "required": bool}
+        """
+        m = utsf.get("meta", {})
+        needs = []
+
+        def _check(field, label, required=False):
+            val = m.get(field)
+            if not val or val == "":
+                needs.append({"field": field, "label": label,
+                              "current": val, "required": required})
+
+        _check("gstNo",        "GST Number",      required=False)
+        _check("address",      "Address",          required=False)
+        _check("state",        "State",            required=False)
+        _check("city",         "City",             required=False)
+        _check("pincode",      "Pincode",          required=False)
+        _check("contactPhone", "Contact Phone",    required=False)
+        _check("contactEmail", "Contact Email",    required=False)
+        _check("customerID",   "Customer / Client ID (links vendor to your account)",
+               required=True)
+        return needs
 
     def save(self, utsf: Dict, output_path: str):
         """Save UTSF to JSON file."""

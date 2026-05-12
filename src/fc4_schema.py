@@ -196,6 +196,8 @@ def empty_priceRate() -> Dict:
         "daccCharges":      0.0,
         "miscCharges":      0.0,
         "dodCharges":       0.0,    # Delivery on Demand flat fee
+        # Tax
+        "gst":              0.0,    # GST percentage (e.g. 18)
         # Percentage of freight
         "fuel":             0.0,    # Fuel surcharge %
         # Variable+fixed charges {v: %, f: fixed}

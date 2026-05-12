@@ -44,6 +44,36 @@ CITY_ZONE_MAP: Dict[str, List[str]] = {
     # Delhi / NCR -> N1
     "DEL": ["N1"], "DELHI": ["N1"], "DEL/NCR": ["N1"], "NCR": ["N1"],
     "WITHIN CITY": ["N1"],  # TCI uses this for local delivery
+    "USER": None,  # TCI "USER" row = the customer rate row — skip as origin label
+
+    # ── TCI Proposal city/region headers (from actual PDF analysis) ────────────
+    "DEL/NCR":        ["N1"],   # TCI header: Delhi/NCR
+    "DEL/N CR":       ["N1"],
+    "REST OF NORTH":  ["N2","N3","N4"],
+    "REST\nOF NORTH": ["N2","N3","N4"],
+    "RON":            ["N2","N3","N4"],
+    "H\nP":           ["N4"],   # Himachal Pradesh
+    "HP":             ["N4"],
+    "JAMMU":          ["X3"],
+    "SRINAGAR":       ["X3"],
+    "BLR/MAA/PCY":    ["S1","S2"],   # Bangalore/Madras/Pondicherry
+    "BLR/ MAA/\nPCY": ["S1","S2"],
+    "HYD/ AP/ TS\nTN / KA": ["S2","S3"],   # Hyderabad/AP/Telangana/TN/Karnataka
+    "HYD/AP/TS":      ["S2","S3"],
+    "KERALA":         ["S4"],
+    "AMD/\nBOM/\nPUNE":    ["W1"],   # Ahmedabad/Mumbai/Pune
+    "AMD/BOM/PUNE":   ["W1"],
+    "REST\nOF WEST":  ["W2"],
+    "REST OF WEST":   ["W2"],
+    "CENTRAL":        ["C1","C2"],
+    "GUWAHATI":       ["NE1"],
+    "ASSAM":          ["NE1","NE2"],
+    "JH/OD":          ["E1"],   # Jharkhand/Odisha
+    "CG":             ["C1"],   # Chhattisgarh
+    "WEST BENGAL":    ["E1","E2"],
+    "BIHAR":          ["E2"],
+    "KOLKATA":        ["E1"],
+    "OKL":            ["N1"],   # Okhla — TCI's Delhi depot code
     "FARIDABAD": ["N1"], "GHAZIABAD": ["N1"], "GURUGRAM": ["N1"], "NOIDA": ["N1"],
 
     # Rest of North -> N2/N3
@@ -168,68 +198,78 @@ def station_to_zone(station_code: str) -> Optional[str]:
 # ─── Charge label patterns ────────────────────────────────────────────────────
 # Each: (canonical_field, [regex_patterns], value_type)
 # value_type: 'scalar', 'pct', 'vf', 'percent_min_fixed'
+# CRITICAL: All [^\d]* spans capped at 60 chars + no-newline to prevent
+# the 1728 CFT constant (L*B*H/1728) from contaminating charge fields.
+_NL = r"[^\d\n]{0,60}"
+
 _CHARGE_REGEXES = [
-    # DWB / Docket charges  ->  look for "DWB Charges Rs.200" or "Docket Rs 50"
+    # DWB / Docket / LR charges
     ("docketCharges", [
-        r"(?:dwb|docket(?:\s*charge)?|lr\s*charge)[^\d]*(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
-        r"(?:document|doc)\s*(?:charge|fee)[^\d]*(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
+        rf"(?:dwb|docket(?:\s*charge)?|lr\s*charge|waybill){_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
+        rf"(?:document|doc)\s*(?:charge|fee){_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
     ], "scalar"),
 
     # Fuel surcharge
     ("fuel", [
-        r"fuel\s*(?:surcharge|%|percent|sc)[^\d]*(\d+(?:\.\d+)?)\s*%",
+        rf"fuel\s*(?:surcharge|%|percent|sc){_NL}(\d+(?:\.\d+)?)\s*%",
         r"(\d+(?:\.\d+)?)\s*%\s*(?:fuel|fsc|f/s)",
     ], "pct"),
 
-    # Minimum charges
+    # Minimum charges — require currency signal to avoid matching minWeight
     ("minCharges", [
-        r"min(?:imum)?\s*(?:chargeable\s*)?(?:basic\s*)?freight[^\d]*(?:sfc[^\d]*)?(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
-        r"min(?:imum)?\s*(?:freight|charge)\s*(?:\(docket\))?[^\d]*(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
-        r"sfc\s*(?:rs\.?\s*|-)?\s*(\d+(?:\.\d+)?)",
+        rf"min(?:imum)?\s*(?:chargeable\s*)?(?:basic\s*)?freight{_NL}(?:rs\.?|₹|inr)\s*(\d+(?:\.\d+)?)",
+        rf"sfc\s*(?:rs\.?|-)\s*(\d+(?:\.\d+)?)",   # TCI "SFC-Rs-350"
+        rf"min(?:imum)?\s*billing{_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
     ], "scalar"),
 
-    # Minimum weight
+    # Minimum weight — MUST end with kg
     ("minWeight", [
-        r"min(?:imum)?\s*(?:chargeable\s*)?weight\s*(?:\(docket\))?[^\d]*(?:sfc[^\d]*)?(\d+(?:\.\d+)?)\s*kg",
-        r"sfc\s*[^\d]*?(\d+(?:\.\d+)?)\s*kg",
-        r"min\s*wt[^\d]*(\d+(?:\.\d+)?)\s*kg",
+        rf"min(?:imum)?\s*(?:chargeable\s*)?weight\s*(?:\(docket\))?{_NL}(\d+(?:\.\d+)?)\s*kg",
+        rf"sfc\s*[^\d\n]{{0,15}}(\d+(?:\.\d+)?)\s*kg",
+        rf"min\s*wt{_NL}(\d+(?:\.\d+)?)\s*kg",
     ], "scalar"),
 
-    # ROV / FOV owners risk
+    # ROV / FOV
     ("rovCharges", [
-        r"(?:rov|fov|freight\s*on\s*value)\s*(?:owners?\s*risk)?[^\d]*(\d+(?:\.\d+)?)\s*%\s*min\s*(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
-        r"(?:rov|fov)[^\d]*(\d+(?:\.\d+)?)\s*%.*?(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
+        rf"(?:rov|fov|freight\s*on\s*value)\s*(?:owners?\s*risk)?{_NL}(\d+(?:\.\d+)?)\s*%\s*min\s*(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
+        rf"(?:rov|fov){_NL}(\d+(?:\.\d+)?)\s*%",
     ], "vf"),
 
-    # ODA charges
+    # ODA
     ("odaCharges", [
-        r"(?:oda|out\s*delivery\s*area)[^\d]*(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:per\s*(?:shipment|consignment|docket))?",
+        rf"(?:oda|out\s*delivery\s*area){_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:per\s*(?:shipment|consignment|docket))?",
     ], "scalar"),
 
-    # Green tax
+    # Green tax / NGT (TCI-specific Delhi surcharge)
     ("greenTax", [
-        r"green\s*(?:tax|cess|surcharge)[^\d]*(\d+(?:\.\d+)?)\s*%",
-    ], "pct"),
-
-    # DACC
-    ("daccCharges", [
-        r"(?:dacc|delivery\s*against)[^\d]*(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
+        rf"green\s*(?:tax|cess|surcharge){_NL}(\d+(?:\.\d+)?)",
+        rf"ngt\s*charge{_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
     ], "scalar"),
 
-    # COD
+    # DACC — cap to same line
+    ("daccCharges", [
+        rf"(?:dacc|delivery\s*against\s*consignee\s*copy){_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
+    ], "scalar"),
+
+    # COD — cap to same line
     ("codCharges", [
-        r"(?:cod|cash\s*on\s*delivery)[^\d]*(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
+        rf"(?:cod|cash\s*on\s*delivery){_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
+    ], "scalar"),
+
+    # FOD = topay for TCI
+    ("topayCharges", [
+        rf"(?:fod|freight\s*on\s*delivery){_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)",
     ], "scalar"),
 
     # Handling
     ("handlingCharges", [
-        r"handling\s*(?:charge(?:s)?)?[^\d]*(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:per\s*kg)?",
+        rf"handling\s*(?:charge(?:s)?)?{_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:per\s*kg)?",
     ], "scalar"),
 ]
 
 # ─── Company info patterns ────────────────────────────────────────────────────
 _COMPANY_REGEXES = {
-    "gstNo":        r'\b(\d{2}[A-Z]{5}\d{4}[A-Z]\d[ZY]\d)\b',
+    "gstNo":        r'\b(\d{2}[A-Z]{5}\d{4}[A-Z]\d[A-Z0-9]{2})\b',  # full GST format
     "panNo":        r'\bPAN\b[:\s]*([A-Z]{5}\d{4}[A-Z])\b',
     "contactPhone": r'\b((?:0\d{2,4}[\s-]?\d{6,8}|\+?91[\s-]?\d{10}|\d{10}))\b',
     "contactEmail": r'\b([\w.+-]+@[\w-]+\.(?:com|in|co\.in|net|org))\b',
@@ -691,7 +731,10 @@ class OICREngine:
         for field, patterns, value_type in _CHARGE_REGEXES:
             for pat in patterns:
                 try:
-                    m = re.search(pat, text_lower, re.IGNORECASE | re.DOTALL)
+                    # CRITICAL: never use re.DOTALL here — it allows patterns to
+                    # cross line boundaries and pick up volumetric constants (1728)
+                    # from adjacent lines in the same section.
+                    m = re.search(pat, text_lower, re.IGNORECASE)
                     if not m:
                         continue
                     if value_type == "scalar" or value_type == "pct":
@@ -1072,12 +1115,7 @@ class OICREngine:
         if company_info:
             result["company_details"].update(company_info)
 
-        # Charges from text
-        text_charges = self.extract_charges_from_text(text)
-        if text_charges:
-            result["charges"].update(text_charges)
-
-        # Zone matrix + charges from tables
+        # Zone matrix + structured table charges — higher priority (table data is more reliable)
         all_table_rows: List[List[str]] = []
         for table in (tables or []):
             if not table:
@@ -1095,10 +1133,30 @@ class OICREngine:
                     result["zone_matrix"] = zm
                     print(f"[OICR] PDF zone matrix: {len(zm)} origins")
 
-            # Charge table extraction
+            # Charge table extraction — setdefault: table charges don't overwrite each other
             table_charges = self.extract_charges_from_table(flat_rows)
             for k, v in table_charges.items():
                 result["charges"].setdefault(k, v)
+
+        # Charges from free text — LOWER priority, only fill fields not found in tables
+        # Uses setdefault so table-extracted values are never overwritten
+        text_charges = self.extract_charges_from_text(text)
+        if text_charges:
+            for k, v in text_charges.items():
+                result["charges"].setdefault(k, v)  # text fills gaps only
+
+        # ── 1CFT=Xkg → divisor conversion (highest priority — overrides table 5000) ──
+        # TCI surface formula: 1CFT=10kg → divisor=28317/10=2832 cm³/kg
+        # This MUST override the AIR formula (L*B*H/5000) from the same table.
+        cft_m = re.search(r'1\s*cft\s*[=:]\s*(\d+(?:\.\d+)?)\s*kg', text.lower())
+        if cft_m:
+            kg_cft = float(cft_m.group(1))
+            if 0 < kg_cft < 200:
+                divisor_sfc = round(28316.8 / kg_cft)
+                # Force-set: SFC divisor overrides AIR/any other value
+                result["charges"]["divisor"] = float(divisor_sfc)
+                result["charges"]["kFactor"] = float(divisor_sfc)
+                print(f"[OICR] 1CFT={kg_cft}kg -> divisor={divisor_sfc} cm3/kg (SFC surface)")
 
         print(f"[OICR] PDF processed: "
               f"company={list(result['company_details'].keys())} "

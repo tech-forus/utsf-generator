@@ -54,7 +54,7 @@ class ImageParser(BaseParser):
 
     # ── Public entry point ────────────────────────────────────────────────────
 
-    def parse(self, file_path: str) -> Dict[str, Any]:
+    def parse(self, file_path: str, doc_context=None) -> Dict[str, Any]:
         text       = ""
         tables     = []
         data: Dict = {}
@@ -81,15 +81,23 @@ class ImageParser(BaseParser):
             # ── Step 1: Preprocess ──────────────────────────────────────────
             processed = self._preprocess(img)
 
-            # ── Step 2: Multi-pass OCR ──────────────────────────────────────
-            text = self._multi_pass_ocr(processed, pytesseract)
-
-            # ── Step 3: Structured table extraction ─────────────────────────
-            if self._check_opencv():
-                tables = self._extract_tables_opencv(processed, pytesseract)
+            # ── Step 2: HOCR spatial reconstruction (primary table extractor) ─
+            # Uses image_to_data word-level bboxes with adaptive Y-tolerance.
+            # Falls back to multi-pass OCR for text when HOCR table is thin.
+            hocr_table = self._hocr_reconstruct_table(processed, pytesseract)
+            if hocr_table:
+                tables = [hocr_table]
+                # Derive plain text from HOCR rows (for charge/company regex)
+                text = "\n".join("  ".join(row) for row in hocr_table)
             else:
-                # Fallback: parse TSV output from pytesseract
-                tables = self._extract_tables_tsv(processed, pytesseract)
+                text = self._multi_pass_ocr(processed, pytesseract)
+
+            # ── Step 3: Structural table extraction (grid-based fallback) ───
+            if not tables:
+                if self._check_opencv():
+                    tables = self._extract_tables_opencv(processed, pytesseract)
+                else:
+                    tables = self._extract_tables_tsv(processed, pytesseract)
 
             # ── Step 4: Parse extracted data ─────────────────────────────────
             data = self._parse_extracted(text, tables)
@@ -171,6 +179,98 @@ class ImageParser(BaseParser):
 
         return Image.fromarray(binary)
 
+    # ── HOCR spatial reconstruction ───────────────────────────────────────────
+
+    def _hocr_reconstruct_table(self, img, pytesseract) -> List[List[str]]:
+        """
+        Plan Feature 1 — primary table extractor.
+
+        Uses pytesseract.image_to_data() to get per-word bounding boxes, then
+        reconstructs table structure with TWO adaptive thresholds derived from
+        the actual font metrics in the image (not hardcoded pixels):
+
+          Row grouping  : words with |top_A - top_B| < median_line_height * 0.6
+                          are in the same row.
+          Column grouping: within a row, gaps > median_word_width * 2 start a
+                          new column.
+
+        This replaces KMeans (sklearn dep) and block_num grouping (fragile on
+        noisy scans where Tesseract mis-assigns paragraph IDs).
+
+        Returns List[row] where each row is List[cell_text].
+        Returns [] if fewer than 2 rows or fewer than 2 columns detected.
+        """
+        import numpy as np
+
+        try:
+            df = pytesseract.image_to_data(
+                img,
+                output_type=pytesseract.Output.DATAFRAME,
+                config="--oem 1 --psm 6 -l eng",
+            )
+        except Exception as e:
+            print(f"[ImageParser] HOCR image_to_data failed: {e}")
+            return []
+
+        # Filter confident words (conf > 30, non-empty text)
+        df = df[df["conf"] > 30].copy()
+        df["text"] = df["text"].fillna("").astype(str).str.strip()
+        df = df[df["text"] != ""]
+        if df.empty:
+            return []
+
+        # ── Adaptive thresholds from actual font metrics ───────────────────
+        heights = df["height"].dropna().values
+        widths  = df["width"].dropna().values
+        if len(heights) == 0 or len(widths) == 0:
+            return []
+
+        median_h = float(np.median(heights))
+        median_w = float(np.median(widths))
+        row_tol  = max(4, median_h * 0.6)   # Y-tolerance for same-row grouping
+        col_gap  = max(8, median_w * 2.0)   # X-gap threshold for column break
+
+        # ── Row grouping by Y-proximity ───────────────────────────────────
+        words = df.sort_values("top")[["text", "left", "top", "width"]].to_dict("records")
+        row_groups: List[List[dict]] = []
+        for word in words:
+            placed = False
+            for group in row_groups:
+                rep_top = group[0]["top"]
+                if abs(word["top"] - rep_top) <= row_tol:
+                    group.append(word)
+                    placed = True
+                    break
+            if not placed:
+                row_groups.append([word])
+
+        # Sort each row by X, sort rows by their representative Y
+        row_groups.sort(key=lambda g: g[0]["top"])
+
+        # ── Column grouping by X-gap within each row ──────────────────────
+        table: List[List[str]] = []
+        for group in row_groups:
+            group.sort(key=lambda w: w["left"])
+            columns: List[List[str]] = [[group[0]["text"]]]
+            for word in group[1:]:
+                prev = group[group.index(word) - 1]
+                gap  = word["left"] - (prev["left"] + prev["width"])
+                if gap > col_gap:
+                    columns.append([])
+                columns[-1].append(word["text"])
+            table.append([" ".join(col) for col in columns])
+
+        # ── Quality gate ──────────────────────────────────────────────────
+        if len(table) < 2:
+            return []
+        max_cols = max(len(r) for r in table)
+        if max_cols < 2:
+            return []
+
+        print(f"[ImageParser] HOCR: {len(table)} rows × {max_cols} cols "
+              f"(row_tol={row_tol:.1f}px, col_gap={col_gap:.1f}px)")
+        return table
+
     # ── Multi-pass OCR ────────────────────────────────────────────────────────
 
     def _multi_pass_ocr(self, img, pytesseract) -> str:
@@ -236,7 +336,10 @@ class ImageParser(BaseParser):
 
         grid = cv2.add(h_lines, v_lines)
         if grid.sum() == 0:
-            # No grid detected — fall back to TSV
+            # RC-3: Try projection profile before KMeans TSV — works on whitespace-separated tables
+            proj_table = self._projection_profile_table(arr, img, pytesseract)
+            if proj_table:
+                return [proj_table]
             return self._extract_tables_tsv(img, pytesseract)
 
         # Find contours of cells
@@ -294,6 +397,109 @@ class ImageParser(BaseParser):
 
         return [table] if len(table) > 1 else []
 
+    def _projection_profile_table(
+        self, binary_arr, orig_img, pytesseract
+    ) -> List[List[str]]:
+        """
+        RC-3: Detect table structure via horizontal/vertical projection profiles.
+
+        Works for tables with WHITESPACE column separation (no visible borders),
+        which causes OpenCV grid detection to return empty. Relies only on numpy
+        (already required by cv2) — no sklearn dependency.
+
+        Algorithm:
+          1. Horizontal projection → valleys = row separators
+          2. Vertical projection   → valleys = column separators
+          3. Per-cell OCR with PSM 7 (single text line)
+
+        Returns: List[row] where each row is List[cell_text], or [] on failure.
+        """
+        import numpy as np
+        from PIL import Image
+
+        try:
+            h, w = binary_arr.shape
+
+            # ── Row separators ──────────────────────────────────────────────────
+            # Sum white pixels per row; valleys = whitespace between text rows
+            h_profile = np.sum(binary_arr == 255, axis=1).astype(float)
+            h_smooth  = np.convolve(h_profile, np.ones(3) / 3, mode="same")
+            h_thresh  = h_smooth.mean() * 0.15
+            row_seps  = self._find_profile_valleys(h_smooth, h_thresh, min_gap=8)
+
+            # ── Column separators ───────────────────────────────────────────────
+            v_profile = np.sum(binary_arr == 255, axis=0).astype(float)
+            v_smooth  = np.convolve(v_profile, np.ones(5) / 5, mode="same")
+            v_thresh  = v_smooth.mean() * 0.10
+            col_seps  = self._find_profile_valleys(v_smooth, v_thresh, min_gap=15)
+
+            # Need at least 2 rows and 1 column separator to form a table
+            if len(row_seps) < 2 or len(col_seps) < 1:
+                return []
+
+            orig_arr = np.array(orig_img)
+            col_bounds = list(zip([0] + col_seps, col_seps + [w]))
+            row_bounds = list(zip(row_seps, row_seps[1:]))
+
+            table: List[List[str]] = []
+            for r_start, r_end in row_bounds:
+                if r_end - r_start < 5:
+                    continue  # skip hairline gaps
+                row: List[str] = []
+                for c_start, c_end in col_bounds:
+                    if c_end - c_start < 5:
+                        continue
+                    cell_img = orig_arr[r_start:r_end, c_start:c_end]
+                    if cell_img.size == 0:
+                        row.append("")
+                        continue
+                    cell_text = pytesseract.image_to_string(
+                        Image.fromarray(cell_img),
+                        config="--oem 1 --psm 7 -l eng"
+                    ).strip()
+                    row.append(cell_text)
+                if any(row):
+                    table.append(row)
+
+            if len(table) < 2:
+                return []
+
+            print(f"[ImageParser] Projection profile: {len(table)} rows × "
+                  f"{len(table[0])} cols detected")
+            return table
+
+        except Exception as e:
+            print(f"[ImageParser] Projection profile failed: {e}")
+            return []
+
+    @staticmethod
+    def _find_profile_valleys(profile, threshold: float, min_gap: int = 8) -> List[int]:
+        """
+        Find midpoints of contiguous regions where profile < threshold.
+        min_gap: minimum pixels between returned separator positions.
+        """
+        valleys: List[int] = []
+        in_valley   = False
+        valley_start = 0
+
+        for i, val in enumerate(profile):
+            if val < threshold and not in_valley:
+                in_valley    = True
+                valley_start = i
+            elif val >= threshold and in_valley:
+                in_valley = False
+                mid = (valley_start + i) // 2
+                if not valleys or mid - valleys[-1] >= min_gap:
+                    valleys.append(mid)
+
+        # Handle valley that extends to the end
+        if in_valley:
+            mid = (valley_start + len(profile)) // 2
+            if not valleys or mid - valleys[-1] >= min_gap:
+                valleys.append(mid)
+
+        return valleys
+
     def _extract_tables_tsv(self, img, pytesseract) -> List[List[List[str]]]:
         """
         Fallback table extraction using Tesseract's TSV output.
@@ -332,32 +538,56 @@ class ImageParser(BaseParser):
 
     def _words_to_table(self, tsv) -> List[List[str]]:
         """
-        Convert TSV DataFrame into a row×col table by clustering x-positions into columns.
+        Convert TSV DataFrame into a row×col table.
+
+        Plan Feature 1: replaces KMeans (sklearn dep) with the same adaptive
+        Y-proximity + X-gap algorithm used by _hocr_reconstruct_table(), making
+        the TSV fallback consistent and sklearn-free.
         """
-        try:
-            import numpy as np
-            from sklearn.cluster import KMeans  # optional — may not be installed
+        import numpy as np
 
-            x_vals = tsv["left"].values.reshape(-1, 1)
-            n_cols = min(max(2, len(set(tsv["left"].values)) // 5), 20)
-            km = KMeans(n_clusters=n_cols, n_init=5, random_state=0).fit(x_vals)
-            tsv = tsv.copy()
-            tsv["col"] = km.labels_
-        except Exception:
-            # Fallback: just join all words per line
-            rows: List[List[str]] = []
-            for _, group in tsv.groupby(["block_num", "par_num", "line_num"]):
-                rows.append([" ".join(group["text"].tolist())])
-            return rows
+        if tsv.empty:
+            return []
 
-        rows: List[List[str]] = []
-        for _, line_group in tsv.groupby(["block_num", "par_num", "line_num"]):
-            line_group = line_group.sort_values("col")
-            row = []
-            for _, col_group in line_group.groupby("col"):
-                row.append(" ".join(col_group["text"].tolist()))
-            rows.append(row)
-        return rows
+        heights  = tsv["height"].dropna().values
+        widths   = tsv["width"].dropna().values
+        median_h = float(np.median(heights)) if len(heights) else 12.0
+        median_w = float(np.median(widths))  if len(widths)  else 20.0
+        row_tol  = max(4, median_h * 0.6)
+        col_gap  = max(8, median_w * 2.0)
+
+        words = (
+            tsv.sort_values("top")[["text", "left", "top", "width"]]
+            .to_dict("records")
+        )
+
+        # Y-proximity row grouping (same algorithm as HOCR)
+        row_groups: List[List[dict]] = []
+        for word in words:
+            placed = False
+            for group in row_groups:
+                if abs(word["top"] - group[0]["top"]) <= row_tol:
+                    group.append(word)
+                    placed = True
+                    break
+            if not placed:
+                row_groups.append([word])
+
+        row_groups.sort(key=lambda g: g[0]["top"])
+
+        table: List[List[str]] = []
+        for group in row_groups:
+            group.sort(key=lambda w: w["left"])
+            columns: List[List[str]] = [[group[0]["text"]]]
+            for word in group[1:]:
+                prev = group[group.index(word) - 1]
+                gap  = word["left"] - (prev["left"] + prev["width"])
+                if gap > col_gap:
+                    columns.append([])
+                columns[-1].append(word["text"])
+            table.append([" ".join(col) for col in columns])
+
+        return table
 
     # ── Data extraction from OCR output ──────────────────────────────────────
 

@@ -1228,15 +1228,18 @@ def api_extract_prices():
         parse_source = "unknown"
         text_for_ai = ""
 
+        extracted_charges = {}
+
         if ext in (".xlsx", ".xls", ".csv", ".tsv"):
-            # Excel/CSV: ExcelParser._auto_detect() extracts zone matrices directly
             from parsers.excel_parser import ExcelParser
             parser = ExcelParser()
             result = parser.parse(tmp_path)
-            zone_matrix = result.get("data", {}).get("zone_matrix") or {}
+            data_block = result.get("data", {})
+            zone_matrix = data_block.get("zone_matrix") or {}
             if zone_matrix:
                 zone_rates = zone_matrix
                 confidence = 80
+            extracted_charges = data_block.get("charges") or result.get("charges") or {}
             text_for_ai = result.get("text", "")
             parse_source = "excel"
 
@@ -1244,36 +1247,40 @@ def api_extract_prices():
             from parsers.pdf_parser import PDFParser
             parser = PDFParser()
             result = parser.parse(tmp_path)
+            data_block = result.get("data", {})
             text_for_ai = result.get("text", "")
             parse_source = "pdf"
-            # Try to use zone_matrix already extracted by the parser before going to AI
-            pdf_zone_matrix = result.get("data", {}).get("zone_matrix") or {}
+            pdf_zone_matrix = data_block.get("zone_matrix") or {}
             if pdf_zone_matrix:
                 zone_rates = pdf_zone_matrix
-                confidence = 65  # lower than Excel since PDF extraction is lossy
+                confidence = 65
+            extracted_charges = data_block.get("charges") or result.get("charges") or {}
 
         elif ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"):
             from parsers.image_parser import ImageParser
             parser = ImageParser()
             result = parser.parse(tmp_path)
+            data_block = result.get("data", {})
             text_for_ai = result.get("text", "")
             parse_source = "image_ocr"
-            # Same — check for directly extracted zone matrix
-            img_zone_matrix = result.get("data", {}).get("zone_matrix") or {}
+            img_zone_matrix = data_block.get("zone_matrix") or {}
             if img_zone_matrix:
                 zone_rates = img_zone_matrix
-                confidence = 55  # OCR accuracy lower than digital PDF
+                confidence = 55
+            extracted_charges = data_block.get("charges") or result.get("charges") or {}
 
         elif ext in (".docx", ".doc"):
             from parsers.word_parser import WordParser
             parser = WordParser()
             result = parser.parse(tmp_path)
+            data_block = result.get("data", {})
             text_for_ai = result.get("text", "")
             parse_source = "word"
-            word_zone_matrix = result.get("data", {}).get("zone_matrix") or {}
+            word_zone_matrix = data_block.get("zone_matrix") or {}
             if word_zone_matrix:
                 zone_rates = word_zone_matrix
                 confidence = 60
+            extracted_charges = data_block.get("charges") or result.get("charges") or {}
 
         else:
             return jsonify({"error": f"Parser not available for {ext}"}), 422
@@ -1281,8 +1288,8 @@ def api_extract_prices():
         # ── AI fallback: use Ollama to extract zone matrix from text ──────────
         if not zone_rates and text_for_ai:
             try:
-                from intelligence.ollama_client import OllamaClient
-                client = OllamaClient()
+                from intelligence.ollama_client import OllamaExtractor
+                client = OllamaExtractor()
                 if client.is_available():
                     ai_result = client.extract_zone_matrix(text_for_ai[:6000])
                     if ai_result and isinstance(ai_result, dict):
@@ -1293,13 +1300,17 @@ def api_extract_prices():
 
         return jsonify({
             "zoneRates": zone_rates,
+            "charges": extracted_charges,
             "confidence": confidence,
             "source": parse_source,
             "zonesFound": len(zone_rates),
+            "chargesFound": len(extracted_charges),
             "message": (
-                f"Extracted {len(zone_rates)} origin zones from {parse_source}"
-                if zone_rates else
-                "Could not extract zone rates from this file — try a cleaner Excel rate card"
+                f"Extracted {len(zone_rates)} origin zones"
+                + (f" and {len(extracted_charges)} charge fields" if extracted_charges else "")
+                + f" from {parse_source}"
+                if zone_rates or extracted_charges else
+                "Could not extract zone rates or charges from this file — try a cleaner rate card"
             ),
         })
 
@@ -1309,7 +1320,10 @@ def api_extract_prices():
         return jsonify({"error": str(exc), "zoneRates": {}, "confidence": 0}), 500
     finally:
         if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass  # Windows: file may still be held by pandas/openpyxl; GC will release it
 
 
 # ─── Routes: Bulk Generate (synchronous, frontend-friendly) ──────────────────

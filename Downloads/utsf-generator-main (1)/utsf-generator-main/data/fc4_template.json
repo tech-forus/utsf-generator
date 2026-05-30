@@ -1,0 +1,188 @@
+{
+  "_comment": "FC4 UTSF Template — copy this and fill in your transporter data",
+  "_version": "4.0",
+  "_docs": "https://github.com/your-org/fc3/blob/main/docs/fc4-format.md",
+
+  "version": "4.0",
+  "format": "FC4",
+  "generatedAt": null,
+  "generatedBy": "manual",
+  "sourceFiles": [],
+  "dataQuality": 0,
+
+  "company": {
+    "id": "unique_transporter_id",
+    "name": "Transporter Name Pvt Ltd",
+    "shortName": "TNL",
+    "code": "TNL001",
+    "transportMode": "road",
+    "serviceType": "LTL",
+    "gstNo": null,
+    "panNo": null,
+    "cin": null,
+    "website": null,
+    "contact": {
+      "phone": null,
+      "email": null,
+      "address": null,
+      "city": null,
+      "state": null,
+      "pincode": null
+    },
+    "status": "active",
+    "blacklistedReason": null,
+    "blacklistedAt": null,
+    "blacklistedBy": null,
+    "verified": false,
+    "verifiedAt": null,
+    "verifiedBy": null,
+    "rating": 0.0,
+    "reviewCount": 0,
+    "approvalStatus": "pending",
+    "rejectionReason": null,
+    "isCanonical": false,
+    "canonicalScore": 0,
+    "dataVersion": 1,
+    "contributorCount": 1,
+    "customerID": null,
+    "tags": [],
+    "createdAt": null,
+    "updatedAt": null
+  },
+
+  "pricing": {
+    "currency": "INR",
+    "effectiveFrom": null,
+    "effectiveTo": null,
+    "rateVersion": "1.0",
+    "lastAuditedAt": null,
+
+    "base": {
+      "minWeight": 0.5,
+      "minCharges": 150,
+      "volumetricDivisor": 5000,
+      "docketCharges": 60,
+      "greenTax": 0,
+      "daccCharges": 0,
+      "miscCharges": 0
+    },
+
+    "fuel": {
+      "enabled": true,
+      "value": 18,
+      "basis": "baseFreight"
+    },
+
+    "rov": {
+      "enabled": true,
+      "type": "percentage_freight",
+      "variable": 0.5,
+      "fixed": 50,
+      "basis": "freight"
+    },
+
+    "insurance": {
+      "enabled": false,
+      "variable": 0,
+      "fixed": 0
+    },
+
+    "oda": {
+      "enabled": true,
+      "type": "per_kg_minimum",
+      "perKg": 5,
+      "minimum": 100,
+      "bands": null,
+      "matrix": null
+    },
+
+    "handling": {
+      "enabled": false,
+      "type": "percentage_freight",
+      "variable": 0,
+      "fixed": 0,
+      "perKg": 0,
+      "minimum": 0
+    },
+
+    "fm": {"enabled": false, "variable": 0, "fixed": 0},
+    "appointment": {"enabled": false, "variable": 0, "fixed": 0},
+    "cod": {"enabled": false, "variable": 0, "fixed": 0},
+    "topay": {"enabled": false, "variable": 0, "fixed": 0},
+    "prepaid": {"enabled": false, "variable": 0, "fixed": 0},
+    "dod": {"enabled": false, "value": 0},
+    "invoiceValue": {"enabled": false, "slabs": []},
+    "singlePiece": {"enabled": false, "type": "per_piece_weight_band", "bands": []},
+
+    "zoneMatrix": {
+      "_comment": "Price per kg from origin zone (key) to destination zone (value key)",
+      "_example": "N1 to S2 = Rs 15.0 per kg",
+      "N1": {"N1": 5.5,  "N2": 7.0,  "N3": 9.0,  "S1": 14.0, "S2": 15.0, "E1": 13.0, "W1": 12.0, "C1": 10.0},
+      "N2": {"N1": 7.0,  "N2": 6.0,  "N3": 8.5,  "S1": 13.5, "S2": 14.5, "E1": 12.5, "W1": 11.5, "C1": 9.5},
+      "S1": {"N1": 14.0, "N2": 13.5, "S1": 6.0,  "S2": 7.5,  "E1": 12.0, "W1": 11.0, "C1": 10.0},
+      "E1": {"N1": 13.0, "N2": 12.5, "S1": 12.0, "E1": 6.0,  "E2": 7.0,  "W1": 12.0, "C1": 9.0},
+      "W1": {"N1": 12.0, "N2": 11.5, "S1": 11.0, "E1": 12.0, "W1": 6.0,  "W2": 7.0,  "C1": 8.0},
+      "C1": {"N1": 10.0, "N2": 9.5,  "S1": 10.0, "E1": 9.0,  "W1": 8.0,  "C1": 6.5,  "C2": 7.5}
+    }
+  },
+
+  "serviceability": {
+    "_comment": "Per-zone coverage. Modes: FULL_ZONE | EXCLUDING | INCLUDING | NOT_SERVED",
+    "_crossZone": "Use crossZoneSingles/crossZoneRanges if this transporter prices some pincodes under a different zone than canonical",
+    "_oda": "List ODA pincodes inline via odaRanges/odaSingles within each zone",
+
+    "N1": {
+      "mode": "FULL_ZONE",
+      "excludedRanges": [],
+      "excludedSingles": [],
+      "crossZoneRanges": [],
+      "crossZoneSingles": [],
+      "odaRanges": [],
+      "odaSingles": [],
+      "servedCount": 0,
+      "odaCount": 0,
+      "coveragePercent": 100.0
+    },
+    "N2": {"mode": "FULL_ZONE"},
+    "N3": {"mode": "NOT_SERVED"},
+    "N4": {"mode": "NOT_SERVED"},
+    "S1": {"mode": "FULL_ZONE"},
+    "S2": {
+      "mode": "EXCLUDING",
+      "excludedRanges": [],
+      "excludedSingles": []
+    },
+    "S3": {"mode": "NOT_SERVED"},
+    "S4": {"mode": "NOT_SERVED"},
+    "E1": {
+      "mode": "INCLUDING",
+      "includedRanges": [{"s": 700001, "e": 700080}],
+      "includedSingles": []
+    },
+    "E2": {"mode": "NOT_SERVED"},
+    "W1": {"mode": "FULL_ZONE"},
+    "W2": {"mode": "NOT_SERVED"},
+    "C1": {"mode": "FULL_ZONE"},
+    "C2": {"mode": "NOT_SERVED"},
+    "NE1": {"mode": "NOT_SERVED"},
+    "NE2": {"mode": "NOT_SERVED"},
+    "X1": {"mode": "NOT_SERVED", "_note": "Andaman & Nicobar — typically air/sea only, most transporters don't serve"},
+    "X2": {"mode": "NOT_SERVED", "_note": "Lakshadweep — typically air/sea only"},
+    "X3": {"mode": "NOT_SERVED", "_note": "Leh Ladakh — seasonal road access, limited coverage"}
+  },
+
+  "stats": {
+    "totalServedPincodes": 0,
+    "totalOdaPincodes": 0,
+    "zonesServed": 0,
+    "activeZones": [],
+    "coverageByRegion": {},
+    "avgCoveragePercent": 0.0,
+    "dataQuality": {
+      "overall": 0,
+      "completeness": 0,
+      "accuracy": 0,
+      "missingFields": []
+    }
+  }
+}

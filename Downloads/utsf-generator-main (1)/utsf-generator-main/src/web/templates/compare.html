@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block title %}Compare UTSFs{% endblock %}
+
+{% block content %}
+<nav class="text-sm text-gray-500 mb-6">
+  <a href="/" class="hover:text-white">Dashboard</a>
+  <span class="mx-2">›</span>
+  <span class="text-white">Compare</span>
+</nav>
+
+<div class="mb-8">
+  <h1 class="text-2xl font-bold text-white mb-1">Compare UTSFs</h1>
+  <p class="text-gray-500 text-sm">Select two generated UTSFs to see a side-by-side diff.</p>
+</div>
+
+<!-- Selector -->
+<div class="card rounded-xl p-6 mb-6">
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+    <div>
+      <label class="text-xs text-gray-500 mb-1 block">UTSF A</label>
+      <select id="select-a" class="w-full bg-gray-900 border border-[#2a2d3a] text-gray-200 rounded-lg px-3 py-2 text-sm">
+        <option value="">— select —</option>
+        {% for o in outputs %}
+        <option value="{{ o.name }}">{{ o.company_name }} ({{ o.quality|int }}/100)</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="text-xs text-gray-500 mb-1 block">UTSF B</label>
+      <select id="select-b" class="w-full bg-gray-900 border border-[#2a2d3a] text-gray-200 rounded-lg px-3 py-2 text-sm">
+        <option value="">— select —</option>
+        {% for o in outputs %}
+        <option value="{{ o.name }}">{{ o.company_name }} ({{ o.quality|int }}/100)</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <button onclick="runCompare()"
+    class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2 rounded-lg text-sm font-medium">
+    Compare
+  </button>
+</div>
+
+<!-- Results -->
+<div id="results" class="hidden space-y-6">
+
+  <!-- Summary -->
+  <div class="card rounded-xl p-5">
+    <h2 class="font-semibold text-white mb-3">Summary</h2>
+    <div id="summary-content"></div>
+  </div>
+
+  <!-- Quality + stats -->
+  <div class="card rounded-xl p-5">
+    <h2 class="font-semibold text-white mb-4">Quality Score</h2>
+    <div class="flex items-center gap-8">
+      <div class="text-center">
+        <div id="qa-score" class="text-4xl font-bold"></div>
+        <div class="text-xs text-gray-500 mt-1" id="qa-label"></div>
+      </div>
+      <div class="text-3xl text-gray-600">→</div>
+      <div class="text-center">
+        <div id="qb-score" class="text-4xl font-bold"></div>
+        <div class="text-xs text-gray-500 mt-1" id="qb-label"></div>
+      </div>
+      <div id="q-delta" class="text-sm font-semibold ml-4"></div>
+    </div>
+  </div>
+
+  <!-- Zone comparison -->
+  <div class="card rounded-xl p-5">
+    <h2 class="font-semibold text-white mb-4">Serviceability Zones</h2>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs border-collapse" id="zones-table">
+        <thead>
+          <tr class="text-gray-500 border-b border-[#2a2d3a]">
+            <th class="text-left py-2 pr-4">Zone</th>
+            <th class="text-center px-3">Mode A</th>
+            <th class="text-center px-3">Mode B</th>
+            <th class="text-right px-3">Pincodes A</th>
+            <th class="text-right px-3">Pincodes B</th>
+            <th class="text-right px-3">Delta</th>
+            <th class="text-right pl-3">Coverage A / B</th>
+          </tr>
+        </thead>
+        <tbody id="zones-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Rate matrix diff -->
+  <div class="card rounded-xl p-5" id="matrix-section">
+    <h2 class="font-semibold text-white mb-4">Rate Changes <span id="rate-count" class="text-gray-500 font-normal text-sm"></span></h2>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs border-collapse">
+        <thead>
+          <tr class="text-gray-500 border-b border-[#2a2d3a]">
+            <th class="text-left py-2 pr-4">Route</th>
+            <th class="text-right px-3">Rate A (Rs/kg)</th>
+            <th class="text-right px-3">Rate B (Rs/kg)</th>
+            <th class="text-right pl-3">Change</th>
+          </tr>
+        </thead>
+        <tbody id="matrix-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Charges diff -->
+  <div class="card rounded-xl p-5" id="charges-section">
+    <h2 class="font-semibold text-white mb-4">Charge Changes</h2>
+    <div id="charges-body"></div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function runCompare() {
+  const a = document.getElementById('select-a').value;
+  const b = document.getElementById('select-b').value;
+  if (!a || !b || a === b) {
+    alert('Please select two different UTSFs');
+    return;
+  }
+
+  const resp = await fetch(`/api/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`);
+  const data = await resp.json();
+  if (!data.ok) { alert(data.error); return; }
+
+  renderResults(data);
+}
+
+function renderResults({ diff, a_name, b_name }) {
+  document.getElementById('results').classList.remove('hidden');
+
+  // Summary
+  const sumEl = document.getElementById('summary-content');
+  sumEl.innerHTML = diff.summary.map(s =>
+    `<p class="text-sm text-gray-300 py-0.5">• ${s}</p>`
+  ).join('') || '<p class="text-sm text-gray-500">No differences</p>';
+
+  // Quality
+  const qa = diff.quality.a, qb = diff.quality.b;
+  const qColor = (q) => q >= 75 ? 'text-green-400' : q >= 50 ? 'text-yellow-400' : 'text-red-400';
+  document.getElementById('qa-score').className = `text-4xl font-bold ${qColor(qa)}`;
+  document.getElementById('qa-score').textContent = Math.round(qa);
+  document.getElementById('qa-label').textContent = a_name;
+  document.getElementById('qb-score').className = `text-4xl font-bold ${qColor(qb)}`;
+  document.getElementById('qb-score').textContent = Math.round(qb);
+  document.getElementById('qb-label').textContent = b_name;
+  const delta = qb - qa;
+  const dEl = document.getElementById('q-delta');
+  dEl.textContent = (delta >= 0 ? '+' : '') + delta.toFixed(1) + ' pts';
+  dEl.className = `text-sm font-semibold ml-4 ${delta > 0 ? 'text-green-400' : delta < 0 ? 'text-red-400' : 'text-gray-500'}`;
+
+  // Zones
+  const zones = ['N1','N2','N3','N4','S1','S2','S3','S4','E1','E2','W1','W2','C1','C2','NE1','NE2','X1','X2','X3'];
+  const tbody = document.getElementById('zones-body');
+  tbody.innerHTML = '';
+  for (const z of zones) {
+    const d = diff.zones[z] || {};
+    const modeA = d.mode_a || 'NOT_SERVED';
+    const modeB = d.mode_b || 'NOT_SERVED';
+    const changed = d.mode_changed;
+    const delta = d.count_delta || 0;
+    const modeColor = m => m === 'FULL_ZONE' ? 'text-green-400' : m === 'NOT_SERVED' ? 'text-gray-600'
+                          : m.includes('EXCL') || m === 'EXCLUDING' || m === 'FULL_MINUS_EXCEPT' ? 'text-blue-400' : 'text-yellow-400';
+    const row = document.createElement('tr');
+    row.className = `border-b border-[#1e2130] ${changed ? 'bg-yellow-950/10' : ''}`;
+    row.innerHTML = `
+      <td class="py-1.5 pr-4 font-mono font-bold text-gray-300">${z}</td>
+      <td class="text-center px-3 ${modeColor(modeA)}">${modeA.replace('FULL_MINUS_EXCEPT','EXCL').replace('ONLY_SERVED','INCL')}</td>
+      <td class="text-center px-3 ${modeColor(modeB)} ${changed ? 'font-bold' : ''}">${modeB.replace('FULL_MINUS_EXCEPT','EXCL').replace('ONLY_SERVED','INCL')}</td>
+      <td class="text-right px-3 text-gray-400">${(d.count_a||0).toLocaleString()}</td>
+      <td class="text-right px-3 text-gray-400">${(d.count_b||0).toLocaleString()}</td>
+      <td class="text-right px-3 ${delta>0?'text-green-400':delta<0?'text-red-400':'text-gray-600'}">${delta>0?'+':''}${delta.toLocaleString()}</td>
+      <td class="text-right pl-3 text-gray-500">${(d.cov_a||0).toFixed(0)}% / ${(d.cov_b||0).toFixed(0)}%</td>
+    `;
+    tbody.appendChild(row);
+  }
+
+  // Matrix
+  const matrixKeys = Object.keys(diff.matrix);
+  document.getElementById('rate-count').textContent = matrixKeys.length
+    ? `(${matrixKeys.length} changes)` : '(no changes)';
+  const mbody = document.getElementById('matrix-body');
+  mbody.innerHTML = '';
+  for (const [key, d] of Object.entries(diff.matrix).slice(0,100)) {
+    const tr = document.createElement('tr');
+    tr.className = 'border-b border-[#1e2130]';
+    const delta = d.delta;
+    tr.innerHTML = `
+      <td class="py-1.5 pr-4 font-mono text-gray-300">${key}</td>
+      <td class="text-right px-3 text-gray-400">${d.a ?? '—'}</td>
+      <td class="text-right px-3 text-gray-300 font-medium">${d.b ?? '—'}</td>
+      <td class="text-right pl-3 ${delta>0?'text-red-400':delta<0?'text-green-400':'text-gray-600'}">${delta>0?'+':''}${delta}</td>
+    `;
+    mbody.appendChild(tr);
+  }
+  if (!matrixKeys.length) {
+    mbody.innerHTML = '<tr><td colspan="4" class="py-2 text-gray-600 text-center">No rate differences</td></tr>';
+  }
+
+  // Charges
+  const chargeEntries = Object.entries(diff.charges);
+  const cbody = document.getElementById('charges-body');
+  if (!chargeEntries.length) {
+    cbody.innerHTML = '<p class="text-sm text-gray-600">No charge differences</p>';
+  } else {
+    cbody.innerHTML = chargeEntries.map(([k,d]) =>
+      `<div class="flex items-center justify-between py-1.5 border-b border-[#1e2130] text-sm">
+        <span class="text-gray-400">${k}</span>
+        <span class="font-mono">
+          <span class="text-gray-500">${d.a ?? '—'}</span>
+          <span class="text-gray-600 mx-2">→</span>
+          <span class="text-white">${d.b ?? '—'}</span>
+        </span>
+      </div>`
+    ).join('');
+  }
+}
+</script>
+{% endblock %}

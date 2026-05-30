@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+venv/
+.venv/
+
+# Runtime data — lives on Railway volume, not in git
+transporters/*
+!transporters/.gitkeep
+!transporters/EXAMPLE_TRANSPORTER/
+
+output/*
+!output/.gitkeep
+
+# Mutable knowledge files (learned per session)
+src/knowledge/learning_data.json
+src/knowledge/learned_dict.py
+
+# Input data samples (large files)
+input data/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.env
+.env.local

@@ -1,0 +1,55 @@
+{
+  "_comment": "Serviceability data — can be provided as zone-level or flat pincode list",
+  "_modes": {
+    "FULL_ZONE": "Serves ALL pincodes in this canonical zone",
+    "EXCLUDING": "Serves all EXCEPT listed pincodes (was FULL_MINUS_EXCEPT)",
+    "INCLUDING": "Serves ONLY the listed pincodes (was ONLY_SERVED)",
+    "NOT_SERVED": "Does not serve this zone"
+  },
+  "_crossZone": "If this transporter prices some pincodes under a DIFFERENT zone than our canonical system, list them in crossZoneSingles of the zone they should be priced as",
+
+  "serviceability": {
+    "N1": {
+      "mode": "FULL_ZONE"
+    },
+    "N2": {
+      "mode": "FULL_ZONE"
+    },
+    "N3": {
+      "mode": "EXCLUDING",
+      "excludedSingles": [272001, 272002, 272128],
+      "excludedRanges": []
+    },
+    "S1": {
+      "mode": "FULL_ZONE"
+    },
+    "S2": {
+      "mode": "EXCLUDING",
+      "excludedSingles": [],
+      "excludedRanges": [{"s": 643001, "e": 643243}]
+    },
+    "E1": {
+      "mode": "INCLUDING",
+      "includedRanges": [{"s": 700001, "e": 700080}, {"s": 711001, "e": 711202}],
+      "includedSingles": [700090, 700100, 712101]
+    },
+    "W1": {
+      "mode": "FULL_ZONE"
+    },
+    "C1": {
+      "mode": "FULL_ZONE"
+    },
+    "N4": {"mode": "NOT_SERVED"},
+    "S3": {"mode": "NOT_SERVED"},
+    "S4": {"mode": "NOT_SERVED"},
+    "E2": {"mode": "NOT_SERVED"},
+    "W2": {"mode": "NOT_SERVED"},
+    "C2": {"mode": "NOT_SERVED"},
+    "NE1": {"mode": "NOT_SERVED"},
+    "NE2": {"mode": "NOT_SERVED"}
+  },
+
+  "oda_pincodes": [
+    272001, 272002, 643001, 643002, 643100
+  ]
+}

@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+RUN mkdir -p transporters output && chmod +x /app/start.sh
+
+# Build-time smoke test
+RUN PYTHONPATH=/app/src python -c "import sys; sys.path.insert(0, '/app/src'); import os; os.chdir('/app/src/web'); from app import app; print('[SMOKE TEST OK]')"
+
+EXPOSE 8080
+
+CMD ["/bin/bash", "/app/start.sh"]

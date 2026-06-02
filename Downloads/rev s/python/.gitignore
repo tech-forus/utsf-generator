@@ -1,0 +1,45 @@
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+venv/
+.venv/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production
+
+# Runtime data — lives on Railway volume, not in git
+transporters/*
+!transporters/.gitkeep
+!transporters/EXAMPLE_TRANSPORTER/
+
+output/*
+!output/.gitkeep
+
+# Mutable knowledge files (learned per session)
+src/knowledge/learning_data.json
+src/knowledge/learned_dict.py
+
+# Knowledge/learning directories (runtime state, not source)
+# Leading / anchors to repo root so src/knowledge/ (source) is NOT ignored.
+/knowledge/
+/knowledge_base/
+
+# Input data samples (large files)
+input data/
+
+# Test data (binary/large)
+tests/data/*.pdf
+tests/data/*.xlsx
+data/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Claude Code local config
+.claude/

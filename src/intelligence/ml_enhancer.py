@@ -791,11 +791,18 @@ class AdvancedUTSFEnhancer:
         
         # Check for unusual charge values
         charges = data.get("charges", {})
-        if charges.get("fuel", 0) > 50:  # Fuel > 50% is unusual
+        # Charges can be dicts {f, v} or scalars — extract scalar for comparison
+        def _scalar(v, default=0):
+            if isinstance(v, dict):
+                return v.get("f", v.get("v", default))
+            try: return float(v)
+            except: return default
+
+        if _scalar(charges.get("fuel", 0)) > 50:  # Fuel > 50% is unusual
             anomalies += 1
         total_checks += 1
-        
-        if charges.get("docketCharges", 0) > 1000:  # Very high docket charges
+
+        if _scalar(charges.get("docketCharges", 0)) > 1000:  # Very high docket charges
             anomalies += 1
         total_checks += 1
         

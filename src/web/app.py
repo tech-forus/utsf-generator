@@ -19,9 +19,24 @@ from werkzeug.utils import secure_filename
 from flask_cors import CORS
 
 # ─── File + Console logging ───────────────────────────────────────────────────
-# Write all output to C:/Users/tech/Downloads/01-06-2026/logs/utsf_YYYY-MM-DD_HH-MM.log
-# as well as stdout so the terminal stays live.
-_LOG_DIR = os.path.join("C:\\Users\\tech\\Downloads\\01-06-2026", "logs")
+# Log directory resolution — platform-aware:
+#   LOG_DIR env var        : use it directly (highest priority)
+#   UTSF_ROOT env var      : $UTSF_ROOT/logs/  (Railway persistent volume)
+#   Default                : logs/ next to this file's project root
+_here = os.path.dirname(os.path.abspath(__file__))
+_utsf_root_env = os.environ.get("UTSF_ROOT", "")
+if os.environ.get("LOG_DIR"):
+    _LOG_DIR = os.environ["LOG_DIR"]
+elif _utsf_root_env:
+    _LOG_DIR = os.path.join(_utsf_root_env, "logs")
+else:
+    # src/web/app.py -> ../../.. = repo parent (where the user's logs/ lives)
+    # Try parent/logs first, fall back to utsf-generator/logs
+    _candidate = os.path.normpath(os.path.join(_here, "..", "..", "..", "logs"))
+    if os.path.isdir(_candidate):
+        _LOG_DIR = _candidate
+    else:
+        _LOG_DIR = os.path.normpath(os.path.join(_here, "..", "..", "logs"))
 os.makedirs(_LOG_DIR, exist_ok=True)
 _LOG_TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M")
 _LOG_FILE = os.path.join(_LOG_DIR, f"utsf_{_LOG_TIMESTAMP}.log")

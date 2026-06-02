@@ -191,10 +191,18 @@ def merge_extracted_data(pieces: List[Dict]) -> Dict:
             if flat_charges:
                 merged["charges"].update(flat_charges)
 
-        # Zone matrix (newer / larger wins)
+        # Zone matrix: prefer the one with more total (origin × destination) rate pairs.
+        # Counting only origins misses the case where two single-origin matrices
+        # have different destination coverage (e.g. PDF gives E1×5 dests while
+        # Excel gives N1×18 dests — 18 > 5, so Excel must win).
+        def _zm_size(m):
+            return sum(len(v) for v in m.values()) if isinstance(m, dict) else 0
+
         zm = piece.get("zone_matrix") or piece.get("zoneMatrix") or {}
-        if len(zm) > len(merged["zone_matrix"]):
+        if _zm_size(zm) > _zm_size(merged["zone_matrix"]):
             merged["zone_matrix"] = zm
+            print(f"[Merge] zone_matrix updated: {sorted(zm.keys())} "
+                  f"({_zm_size(zm)} rate pairs)")
 
         # Serviceability block (FC4/v2 format — larger dict wins)
         svc = piece.get("serviceability") or piece.get("service") or {}

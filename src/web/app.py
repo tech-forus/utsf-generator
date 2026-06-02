@@ -1362,6 +1362,7 @@ def api_extract_prices():
             message = "Could not extract zone rates from this file — try a cleaner Excel rate card"
 
         return jsonify({
+            "success":            bool(zone_rates),
             "zoneRates":          zone_rates,
             "confidence":         confidence,
             "source":             parse_source,

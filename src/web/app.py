@@ -7,14 +7,62 @@ import os
 import sys
 import re
 import json
+import logging
 import subprocess
 import tempfile
+from datetime import datetime
 from flask import (
     Flask, render_template, request, redirect, url_for,
     Response, stream_with_context, jsonify, send_file, abort
 )
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
+
+# ─── File + Console logging ───────────────────────────────────────────────────
+# Write all output to C:/Users/tech/Downloads/01-06-2026/logs/utsf_YYYY-MM-DD_HH-MM.log
+# as well as stdout so the terminal stays live.
+_LOG_DIR = os.path.join("C:\\Users\\tech\\Downloads\\01-06-2026", "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
+_LOG_TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M")
+_LOG_FILE = os.path.join(_LOG_DIR, f"utsf_{_LOG_TIMESTAMP}.log")
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)-8s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.FileHandler(_LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+_logger = logging.getLogger("utsf")
+
+# Redirect print() calls so they also land in the log file.
+class _TeeWriter:
+    """Write to both the original stream and the log file."""
+    def __init__(self, original, log_path: str):
+        self._orig = original
+        self._fh = open(log_path, "a", encoding="utf-8", buffering=1)
+    def write(self, msg):
+        self._orig.write(msg)
+        self._fh.write(msg)
+    def flush(self):
+        self._orig.flush()
+        self._fh.flush()
+    def fileno(self):
+        return self._orig.fileno()
+    @property
+    def encoding(self):
+        return getattr(self._orig, "encoding", "utf-8")
+    @property
+    def errors(self):
+        return getattr(self._orig, "errors", "replace")
+
+# Tee stdout and stderr so every print() ends up in the log file too.
+sys.stdout = _TeeWriter(sys.stdout, _LOG_FILE)
+sys.stderr = _TeeWriter(sys.stderr, _LOG_FILE)
+
+print(f"[UTSF] Log file: {_LOG_FILE}")
 
 # ─── Path setup ───────────────────────────────────────────────────────────────
 WEB_DIR       = os.path.dirname(os.path.abspath(__file__))
@@ -136,16 +184,20 @@ SORT_KEYWORDS = {
         "certificate", "incorporation", "license", "approval", "kyc",
     ],
     "charges": [
-        "rate", "rates", "charge", "charges", "price", "pricing", "tariff",
+        "charge", "charges", "price", "pricing", "tariff",
         "fuel", "docket", "oda", "rov", "insurance", "handling",
         "surcharge", "fee", "fees", "cost", "invoice", "billing",
-        # "freight" removed — too generic, appears in proposals too
+        # "rate" alone removed — rate book / rate card are zone_data (see below)
         # "tariff" kept — unambiguous charge-only term
     ],
     "zone_data": [
         "zone", "zones", "pincode", "pincodes", "serviceability", "service",
         "coverage", "matrix", "area", "delivery", "served", "network",
         "lane", "lanes", "route", "region", "reach",
+        # Rate-book / rate-card style names → zone_data (they contain the price
+        # matrix keyed by origin/destination, not per-item charge schedules)
+        "rate card", "rate sheet", "cade rate", "out card", "rate book",
+        "ratebook", "ratecard", "ratesheet",
     ],
 }
 
@@ -175,6 +227,23 @@ def auto_classify_file(filename: str) -> str:
     # Hard override: pincodes/serviceability files always go to zone_data
     if any(kw in name_clean for kw in ("pincode", "pincodes", "serviceable",
                                         "serviceability", "coverage", "network")):
+        return "zone_data"
+
+    # Hard override: rate books / rate cards are zone_data (they contain the zone
+    # price matrix, not per-item charge schedules).
+    # Match: "rate card", "rate sheet", "cade rate", "out card", "rate book",
+    #        and the pattern "book … rate" or "rate … book" anywhere in the name.
+    _RATE_CARD_RE = re.compile(
+        r'(?i)(rate\s*card|rate\s*sheet|cade\s*rate|out\s*card|rate\s*book|ratebook|ratecard|ratesheet)'
+    )
+    if _RATE_CARD_RE.search(name_clean):
+        return "zone_data"
+    # "book" AND "rate" together (e.g. "Book2 cade rate", "rate book 2025")
+    if "book" in words and "rate" in words:
+        return "zone_data"
+    # standalone "rate" or "rates" (not part of a compound already matched) → zone_data
+    # because stand-alone rate files are almost always zone price matrices
+    if "rate" in words or "rates" in words:
         return "zone_data"
 
     scores = {sub: 0 for sub in SUBFOLDERS}
@@ -1237,6 +1306,7 @@ def api_extract_prices():
         confidence = 0
         parse_source = "unknown"
         text_for_ai = ""
+        result = {}   # always defined so the parsed_data line below is safe
 
         if ext in (".xlsx", ".xls", ".csv", ".tsv"):
             print(f"[UTSF:extract-prices] Using ExcelParser for '{ext}'")
@@ -1325,7 +1395,7 @@ def api_extract_prices():
         total_elapsed = _time.time() - _t0
 
         # ── Collect enrichment metadata from PDF result ───────────────────────
-        parsed_data = result.get("data", {}) if 'result' in dir() else {}
+        parsed_data = result.get("data", {}) if isinstance(result, dict) else {}
         zones_extrapolated = parsed_data.get("_zones_extrapolated", [])
         rate_mode          = parsed_data.get("_rate_mode", "")
         zone_distribution  = parsed_data.get("zone_distribution", {})

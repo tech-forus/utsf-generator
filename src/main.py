@@ -507,6 +507,16 @@ def generate_utsf_for_transporter(
                                       f"{list(ai_data.keys())[:6]}")
 
                         elif "charge" in folder_type or "rate" in folder_type:
+                            # Always attempt zone matrix extraction FIRST for charge/rate
+                            # files — rate cards (like "Book2 cade rate.xlsx") contain the
+                            # zone price matrix even though they land in "charges" folder.
+                            if not extracted_pieces[-1].get("zone_matrix"):
+                                ai_zm = extractor.extract_zone_matrix(result["text"])
+                                if ai_zm:
+                                    extracted_pieces[-1]["zone_matrix"] = ai_zm
+                                    print(f"    AI extracted zone matrix from charges file: "
+                                          f"{len(ai_zm)} origins")
+                            # Also extract charge fields
                             ai_data = extractor.extract_charges(result["text"])
                             if ai_data:
                                 extracted_pieces[-1]["charges"] = ai_data

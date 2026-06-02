@@ -1637,15 +1637,23 @@ def api_classify_files():
 
 # ─── Routes: API ──────────────────────────────────────────────────────────────
 
+_ollama_cache: dict = {"ok": False, "models": [], "checked_at": 0}
+_OLLAMA_CACHE_TTL = 60   # re-check Ollama at most once per minute
+
 @app.get("/api/status")
 def api_status():
-    try:
-        from intelligence.ollama_client import get_available_models
-        models = get_available_models()
-        ollama_ok = len(models) > 0
-    except Exception:
-        models = []
-        ollama_ok = False
+    import time as _t
+    now = _t.time()
+    # Cache Ollama probe — it takes ~2 s to fail, making every /api/status slow.
+    if now - _ollama_cache["checked_at"] > _OLLAMA_CACHE_TTL:
+        try:
+            from intelligence.ollama_client import get_available_models
+            models = get_available_models()
+            _ollama_cache.update({"ok": len(models) > 0, "models": models, "checked_at": now})
+        except Exception:
+            _ollama_cache.update({"ok": False, "models": [], "checked_at": now})
+    ollama_ok = _ollama_cache["ok"]
+    models    = _ollama_cache["models"]
 
     transporter_count = len(list_transporters())
     output_count = 0

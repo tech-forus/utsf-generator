@@ -1313,6 +1313,11 @@ def api_extract_prices():
             from parsers.excel_parser import ExcelParser
             parser = ExcelParser()
             result = parser.parse(tmp_path)
+            # On Windows, pandas/openpyxl hold a file handle on .xlsx until GC.
+            # Explicitly delete the parser so the handle is released before
+            # the finally-block tries to os.remove() the temp file.
+            del parser
+            import gc; gc.collect()
             zone_matrix = result.get("data", {}).get("zone_matrix") or {}
             print(f"[UTSF:extract-prices] ExcelParser result: zone_matrix_keys={list(zone_matrix.keys())[:5]} text_len={len(result.get('text',''))}")
             if zone_matrix:
@@ -1450,8 +1455,17 @@ def api_extract_prices():
         return jsonify({"error": str(exc), "zoneRates": {}, "confidence": 0}), 500
     finally:
         if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
-            print(f"[UTSF:extract-prices] Temp file cleaned up: {tmp_path}")
+            try:
+                os.remove(tmp_path)
+                print(f"[UTSF:extract-prices] Temp file cleaned up: {tmp_path}")
+            except OSError as _rm_err:
+                # Windows locks xlsx/xls files while the parser holds a handle.
+                # Schedule deletion on next GC pass instead of crashing.
+                import gc; gc.collect()
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    print(f"[UTSF:extract-prices] Could not delete temp file (still locked): {tmp_path}")
 
 
 # ─── Routes: Bulk Generate (synchronous, frontend-friendly) ──────────────────

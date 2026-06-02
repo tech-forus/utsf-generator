@@ -1116,11 +1116,42 @@ class OICREngine:
         # Regex to detect air-mode section label rows
         _AIR_LABEL_RE  = re.compile(r'(?i)\bby\s+air\b')
         _ROAD_LABEL_RE = re.compile(r'(?i)\bby\s+(?:road|surface|ground|express)\b')
+        _NUMERIC_RE    = re.compile(r'^\d+(?:\.\d+)?$')
+        _TAT_RE        = re.compile(r'(?i)\b(?:hrs?|days?|hours?)\b')
+
+        # ── Pre-header continuation rows ──────────────────────────────────────
+        # When pdfplumber splits a multi-page table, page N+1 starts with data
+        # rows that have NO header (the header was on page N).
+        # Detect this by checking if table_rows[0] looks like rate data:
+        # col-0 = city name, col-1 = state name, col-2 = small number (rate).
+        first_header_row = header_segments[0][0]
+        if first_header_row > 0:
+            # Peek at the very first row to see if it's data (not a label/section header)
+            first_row_cells = [str(c).strip() for c in table_rows[0]]
+            has_city  = len(first_row_cells) >= 1 and first_row_cells[0] and not self._RATE_HEADER_RE.search(first_row_cells[0])
+            has_rate  = (len(first_row_cells) >= 3 and
+                         _NUMERIC_RE.match(first_row_cells[2].replace(',', '').strip()))
+            if has_city and has_rate:
+                # Infer columns from the data pattern: dest=0, state=1, rate=2, TAT=3
+                # (same layout as the in-table header below this section)
+                d_infer, s_infer, r_infer = 0, 1, 2
+                print(f"[OICR] City-rate-card: processing {first_header_row} headerless "
+                      f"continuation rows (multi-page split)")
+                # Add as a pseudo-section with road mode
+                # Will be processed in the loop below via sections list
+                header_segments = [(-1, d_infer, r_infer, s_infer)] + list(header_segments)
+                # Build pseudo section: rows 0 → first real header
+                # (inserted as first entry; existing header_segments shifted)
 
         # Build section ranges and determine mode for each section.
         # Scan backwards from each header to find the nearest mode label above it.
         sections = []
         for si, (hi, dc, rc, sc) in enumerate(header_segments):
+            if hi == -1:
+                # Pseudo-section for pre-header continuation rows
+                end = header_segments[1][0] if len(header_segments) > 1 else len(table_rows)
+                sections.append((0, end, dc, rc, sc, "road"))
+                continue
             start = hi + 1
             end   = header_segments[si + 1][0] if si + 1 < len(header_segments) else len(table_rows)
             # Determine section mode: look for "By Air" / "By Road" label above this header

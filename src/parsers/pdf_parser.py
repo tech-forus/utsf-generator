@@ -635,7 +635,10 @@ class PDFParser(BaseParser):
             _seg = SectionSegmenter()
             _sections = _seg.segment_text(text)
             _sections_map = _seg.get_sections_map(_sections)
-            # Give OICR only CHARGES + MIXED + COMPANY_INFO sections
+            # Give OICR only CHARGES + MIXED + COMPANY_INFO sections.
+            # Blocked: VOLUMETRIC (divisor constants), LEGAL (clause numbers),
+            # AIR_FREIGHT (air-mode rates that must never be used as road rates).
+            _BLOCKED_CATS = frozenset(("VOLUMETRIC", "LEGAL", "AIR_FREIGHT"))
             _allowed = []
             for cat in ("CHARGES", "MIXED", "COMPANY_INFO"):
                 for sec in _sections_map.get(cat, []):
@@ -644,7 +647,7 @@ class PDFParser(BaseParser):
                 _charge_text_for_oicr = "\n\n".join(_allowed)
                 _blocked = sum(
                     len(secs) for cat, secs in _sections_map.items()
-                    if cat in ("VOLUMETRIC", "LEGAL")
+                    if cat in _BLOCKED_CATS
                 )
                 print(f"[PDFParser] Section pre-filter: {len(_allowed)} allowed sections, "
                       f"{_blocked} dangerous sections blocked from OICR")
@@ -739,6 +742,11 @@ class PDFParser(BaseParser):
             for allowed_cat in ("CHARGES", "MIXED", "UNKNOWN", "ZONE_MATRIX"):
                 for sec in sections_map.get(allowed_cat, []):
                     charge_text += "\n" + sec.text
+            # Log if any AIR_FREIGHT sections were blocked from charge extraction
+            _air_blocked = len(sections_map.get("AIR_FREIGHT", []))
+            if _air_blocked:
+                print(f"[PDFParser] Air-section filter: blocked {_air_blocked} "
+                      f"AIR_FREIGHT section(s) from charge extraction")
 
             if not charge_text.strip():
                 # Fallback: full text if segmenter found no CHARGES sections

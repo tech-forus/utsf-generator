@@ -95,6 +95,19 @@ _WEIGHT_SLAB_SIGNALS = {
     "per_kg_rates": re.compile(r'\b\d+(?:\.\d+)?\s*/?\s*kg\b', re.I),
 }
 
+# Air freight sections — contain air-mode rates that must never be mistaken
+# for road/surface rates.  Air divisor is 6000 (vs 5000 for road); charges
+# are also completely different service tiers.
+_AIR_FREIGHT_SIGNALS = {
+    "air_mode_words": re.compile(
+        r'\b(?:air\s*(?:freight|cargo|express|way\s*bill|awb|shipment|consignment|'
+        r'tariff|rates?|charges?|mode|service)|awb|airway\s*bill|air\s*waybill|'
+        r'aviation\s*(?:cargo|freight|rates?)|by\s*air|air\s*only)\b', re.I),
+    "awb_divisor": re.compile(
+        r'\bvolumetric\s*(?:divisor|factor)\s*[=:]\s*6000\b'
+        r'|\b6000\s*(?:divisor|factor)\b', re.I),
+}
+
 # Volumetric / dimensional weight sections — dangerous for charge extraction
 # because they contain large divisor constants (1728, 5000, 2832) that bleed
 # into docketCharges / daccCharges / codCharges via greedy regexes.
@@ -124,6 +137,10 @@ _LEGAL_SIGNALS = {
 # ---------------------------------------------------------------------------
 
 _WEIGHTS = {
+    "AIR_FREIGHT": {
+        "air_mode_words": 5.0,   # "air freight" / "air cargo" is unambiguous
+        "awb_divisor":    3.0,
+    },
     "VOLUMETRIC": {
         "cft_formula":      5.0,   # "1 CFT = 1728" is unambiguous
         "dim_formula":      4.0,
@@ -299,6 +316,7 @@ class ContentClassifier:
 
     def _get_pattern(self, category: str, signal_name: str):
         mapping = {
+            "AIR_FREIGHT":  _AIR_FREIGHT_SIGNALS,
             "ZONE_MATRIX":  _ZONE_MATRIX_SIGNALS,
             "PINCODE_LIST": _PINCODE_SIGNALS,
             "CHARGES":      _CHARGES_SIGNALS,

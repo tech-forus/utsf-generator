@@ -178,14 +178,71 @@ def _haversine(c1: Tuple[float, float], c2: Tuple[float, float]) -> float:
     return 6371 * 2 * math.asin(math.sqrt(a))
 
 
+# ─── State (full name + common abbreviations/typos) -> zone(s) ────────────────
+# Used by detect_city_rate_card to handle state-column lookups.
+# Canonical spellings AND the most common misspellings that appear in rate cards.
+STATE_ZONE_MAP: Dict[str, List[str]] = {
+    # North
+    "UTTAR PRADESH": ["N2"], "UP": ["N2"], "U.P.": ["N2"], "U.P": ["N2"],
+    "HARYANA": ["N2"], "PUNJAB": ["N2"], "CHANDIGARH": ["N2"],
+    "HIMACHAL PRADESH": ["N4"], "HP": ["N4"], "H.P.": ["N4"], "HIMACHAL": ["N4"],
+    "UTTARAKHAND": ["N3"], "UTTRAKHAND": ["N3"], "UTTARANCHAL": ["N3"],
+    "RAJASTHAN": ["N3"], "RJ": ["N3"],
+    # J&K / Ladakh (Special)
+    "JAMMU & KASHMIR": ["X3"], "JAMMU AND KASHMIR": ["X3"],
+    "J&K": ["X3"], "JK": ["X3"], "LADAKH": ["X3"],
+    # South
+    "KARNATAKA": ["S2"], "KA": ["S2"],
+    "TAMIL NADU": ["S1"], "TAMILNADU": ["S1"], "TN": ["S1"],
+    "PONDICHERRY": ["S1"], "PUDUCHERRY": ["S1"],
+    "TELANGANA": ["S3"], "TS": ["S3"],
+    "ANDHRA PRADESH": ["S3"], "AP": ["S3"], "A.P.": ["S3"],
+    "KERALA": ["S4"], "KL": ["S4"],
+    # West
+    "GUJARAT": ["W1"], "GUJRAT": ["W1"], "GUJRAT": ["W1"], "GJ": ["W1"],
+    "MAHARASHTRA": ["W2"], "MH": ["W2"],
+    "GOA": ["W2"],
+    "MUMBAI (MAHARASHTRA)": ["W1"],
+    # East
+    "WEST BENGAL": ["E1"], "WB": ["E1"],
+    "ODISHA": ["E1"], "ORISSA": ["E1"],
+    "JHARKHAND": ["E1"], "JH": ["E1"],
+    "BIHAR": ["E2"], "BR": ["E2"],
+    # Central
+    "MADHYA PRADESH": ["C1"], "MP": ["C1"], "M.P.": ["C1"],
+    "CHHATTISGARH": ["C1"], "CHATTISGARH": ["C1"], "CG": ["C1"],
+    # Northeast
+    "ASSAM": ["NE1"], "AS": ["NE1"],
+    "MEGHALAYA": ["NE2"], "TRIPURA": ["NE2"], "MANIPUR": ["NE2"],
+    "NAGALAND": ["NE2"], "MIZORAM": ["NE2"], "ARUNACHAL PRADESH": ["NE2"],
+    "SIKKIM": ["NE2"],
+    # Special
+    "ANDAMAN & NICOBAR": ["X1"], "ANDAMAN AND NICOBAR": ["X1"],
+    "ANDAMAN": ["X1"], "A&N": ["X1"],
+    "LAKSHADWEEP": ["X2"],
+    # Broad regional labels on rate cards
+    "REST OF INDIA": ["N2","N3","N4","S2","S3","S4","E2","W2","C1","C2","NE1","NE2"],
+    "REST OF STATE": ["N2","N3","N4","S2","S3","S4","E2","W2","C1","C2","NE1","NE2"],
+    "ALL INDIA": ["N1","N2","N3","N4","S1","S2","S3","S4","E1","E2","W1","W2","C1","C2","NE1","NE2"],
+}
+
+
 def city_to_zones(city_text: str) -> List[str]:
     """Map a city name / abbreviation to one or more FC4 zone codes."""
     txt = city_text.strip().upper()
     if txt in CITY_ZONE_MAP:
         return CITY_ZONE_MAP[txt]
-    # Partial match
+    # State-level lookup (handles full state names that are not in CITY_ZONE_MAP)
+    if txt in STATE_ZONE_MAP:
+        return STATE_ZONE_MAP[txt]
+    # Partial match against CITY_ZONE_MAP (guards against substring false-positives
+    # by requiring at least 4 chars in both the key and the cell text)
     for key, zones in CITY_ZONE_MAP.items():
-        if key in txt or txt in key:
+        if len(key) >= 4 and len(txt) >= 4 and (key in txt or txt in key):
+            return zones
+    # Partial match against STATE_ZONE_MAP
+    for key, zones in STATE_ZONE_MAP.items():
+        if len(key) >= 4 and len(txt) >= 4 and (key in txt or txt in key):
             return zones
     return []
 
@@ -619,38 +676,74 @@ class OICREngine:
             "served_pincodes": list(set(served_pincodes)),
         }
 
+    # ─── Corner-cell patterns that indicate a zone matrix header ─────────────────
+    # These appear in the top-left cell of a "To-> / From|" style rate table.
+    _CORNER_CELL_RE = re.compile(
+        r'^\s*(?:from[/\\]?to|to[/\\]?from|from|to|'
+        r'origin[/\\]?dest(?:ination)?|o(?:rig)?[/\\]d(?:est)?|'
+        r'from\s*station|zone|lanes?|route)\s*$',
+        re.I
+    )
+
+    _ZONE_SET = frozenset(ALL_ZONES)
+
+    def _cell_to_zones(self, cell: str) -> List[str]:
+        """
+        Map a cell value to FC4 zone code(s). Checks, in order:
+          1. Direct canonical zone code (N1, S2, NE1 ...)
+          2. CITY_ZONE_MAP lookup (city / region name)
+          3. Partial city match
+          4. Pincode lookup (6-digit cell)
+        """
+        txt = cell.strip().upper()
+        if not txt or self._CORNER_CELL_RE.match(txt):
+            return []
+        # 1. Direct canonical
+        if txt in self._ZONE_SET:
+            return [txt]
+        # 2. City/region dict
+        zones = city_to_zones(txt)
+        if zones:
+            return zones
+        # 3. Pincode: "400001" -> lookup zone
+        if txt.isdigit() and len(txt) == 6:
+            z = self.pincode_to_zone(int(txt))
+            if z:
+                return [z]
+        return []
+
     # ─── 2. City-based zone matrix detection ──────────────────────────────────
 
     def detect_city_zone_matrix(self, table_rows: List[List[str]],
                                  context: str = "") -> Optional[Dict]:
         """
-        Parse a city-based zone matrix (columns = city names, rows = origin cities).
-        Returns a FC4 zone matrix dict or None.
+        Parse a zone matrix table where rows = origins, columns = destinations.
 
-        Example:
-          FROM TO | DEL/NCR | BANGALORE | CHENNAI | MUMBAI
-          USER    |   7     |    11     |   11    |   9
-          KOLKATA |   12    |    11     |   11    |   9
+        Handles three header formats:
+          A) City names:  FROM/TO | DEL/NCR | BANGALORE | CHENNAI
+          B) Zone codes:  To->     | N1      | N2        | S1      (FC4 standard)
+          C) Mixed:       FROM    | NORTH   | SOUTH     | EAST
+
+        Detection: finds the row with ≥3 resolvable zone/city hits.
+        From-column: the column immediately left of the first resolved dest column.
         """
         if not table_rows or len(table_rows) < 2:
             return None
 
-        # Find header row (row with multiple city/zone names)
+        _ZONE_SET = self._ZONE_SET
+
+        # ── Find header row ───────────────────────────────────────────────────
         header_row_idx = None
         dest_zones: Dict[int, List[str]] = {}  # col_idx -> [zone codes]
 
-        for i, row in enumerate(table_rows):
+        for i, row in enumerate(table_rows[:20]):   # search first 20 rows
             cells = [str(c).strip().upper() for c in row]
-            zone_hits = 0
             col_zones: Dict[int, List[str]] = {}
             for j, cell in enumerate(cells):
-                zones = city_to_zones(cell)
-                if not zones and cell in [z for z in ALL_ZONES]:
-                    zones = [cell]
+                zones = self._cell_to_zones(cell)
                 if zones:
-                    zone_hits += 1
                     col_zones[j] = zones
-            if zone_hits >= 3:
+            if len(col_zones) >= 3:
                 header_row_idx = i
                 dest_zones = col_zones
                 break
@@ -658,32 +751,35 @@ class OICREngine:
         if header_row_idx is None or not dest_zones:
             return None
 
-        # Identify from-column (first column)
-        from_col = min(dest_zones.keys()) - 1 if dest_zones else 0
-        from_col = max(0, from_col)
+        # ── Identify from-column ──────────────────────────────────────────────
+        # from_col is the column immediately left of the first resolved dest col.
+        # If the first resolved col IS col 0 (no label column), from_col = 0 too.
+        first_dest_col = min(dest_zones.keys())
+        from_col = max(0, first_dest_col - 1)
 
-        # Parse data rows
+        # ── Parse data rows ───────────────────────────────────────────────────
         zone_rates: Dict[str, Dict[str, float]] = {}
+        max_dest_col = max(dest_zones.keys())
 
         for i, row in enumerate(table_rows):
             if i <= header_row_idx:
                 continue
             cells = [str(c).strip() for c in row]
-            if len(cells) <= max(dest_zones.keys()):
+            if len(cells) <= max_dest_col:
                 continue
 
-            # Determine from zone
+            # Resolve origin zone from from-column
             from_cell = cells[from_col].upper().strip()
-            from_zones = city_to_zones(from_cell)
-            if not from_zones:
-                # Might be "USER" or blank for single-origin
-                # Use context or default
-                if "user" in from_cell.lower() or from_cell in ("", "-"):
-                    from_zones = city_to_zones(context.upper()) or ["E1"]
-                else:
-                    continue
+            from_zones = self._cell_to_zones(from_cell)
 
-            # Extract rates for each destination zone
+            if not from_zones:
+                # "USER" / blank = single-origin with context
+                if "user" in from_cell.lower() or from_cell in ("", "-", "NONE"):
+                    from_zones = self._cell_to_zones(context.upper()) or ["E1"]
+                else:
+                    continue   # unresolvable origin — skip row
+
+            # Extract rates for each destination column
             for col_idx, d_zones in dest_zones.items():
                 if col_idx >= len(cells):
                     continue
@@ -692,31 +788,415 @@ class OICREngine:
                     if not rate_str or rate_str.upper() in ("N/A", "-", "NA", ""):
                         continue
                     rate = float(rate_str)
-                    if not (1.0 <= rate <= 500.0):
+                    if not (0.5 <= rate <= 500.0):
                         continue
                 except (ValueError, TypeError):
                     continue
 
                 for fz in from_zones:
-                    if fz not in zone_rates:
-                        zone_rates[fz] = {}
+                    zone_rates.setdefault(fz, {})
                     for dz in d_zones:
-                        # Average if multiple rows map to same pair
                         if dz in zone_rates[fz]:
-                            zone_rates[fz][dz] = (zone_rates[fz][dz] + rate) / 2
+                            # Running average when multiple rows map same pair
+                            zone_rates[fz][dz] = round(
+                                (zone_rates[fz][dz] + rate) / 2, 3)
                         else:
                             zone_rates[fz][dz] = rate
 
         if not zone_rates:
             return None
 
-        # If only 1 origin zone, extrapolate
+        # ── Road-rate sanity pass ─────────────────────────────────────────────
+        # Drop any origin whose MINIMUM destination rate looks like an air rate
+        # (road freight: 5–50 Rs/kg; air: typically >50 Rs/kg for short hauls).
+        zone_rates = self._filter_air_rows(zone_rates)
+        if not zone_rates:
+            return None
+
+        # ── If only 1 origin, extrapolate full matrix ─────────────────────────
         if len(zone_rates) == 1:
             orig = list(zone_rates.keys())[0]
             zone_rates = self._extrapolate_zone_matrix(orig, zone_rates[orig])
+        # ── If partial (< 19 origins), fill gaps ─────────────────────────────
+        elif len(zone_rates) < len(ALL_ZONES):
+            zone_rates = self.fill_partial_zone_matrix(zone_rates)
 
         print(f"[OICR] City zone matrix: {len(zone_rates)} origins extracted")
         return zone_rates
+
+    # ─── Road-rate filter ─────────────────────────────────────────────────────
+
+    def _filter_air_rows(
+        self, zone_rates: Dict[str, Dict[str, float]]
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        Remove origin rows whose rates look like air freight (min > 60 Rs/kg).
+        A transporter may show both road and air rates in the same table; we only
+        want road.  If ALL rows look like air, keep them (may be an air-only carrier;
+        let the caller decide).
+        """
+        ROAD_MAX_MIN = 60.0   # if cheapest dest rate > this, likely air
+
+        air_rows = [
+            orig for orig, dests in zone_rates.items()
+            if dests and min(dests.values()) > ROAD_MAX_MIN
+        ]
+        if len(air_rows) == len(zone_rates):
+            # Every row looks like air — don't filter (may be a valid air matrix,
+            # or the rates are Rs/100kg / effective — keep and let upstream decide)
+            if air_rows:
+                print(f"[OICR] WARNING: all origin rows have min-rate > {ROAD_MAX_MIN} "
+                      f"(possibly air rates or effective all-in rates)")
+            return zone_rates
+
+        for orig in air_rows:
+            print(f"[OICR] Dropping origin '{orig}' — min rate "
+                  f"{min(zone_rates[orig].values()):.1f} > {ROAD_MAX_MIN} Rs/kg "
+                  f"(looks like air/all-in, not road base rate)")
+            del zone_rates[orig]
+
+        return zone_rates
+
+    # ─── Pincode zone inference ───────────────────────────────────────────────
+
+    def infer_zones_from_pincodes(
+        self, pincodes: List[int]
+    ) -> Dict[str, int]:
+        """
+        Group pincodes by canonical zone.
+        Returns {zone_code: count} sorted by count descending.
+        """
+        zone_counts: Dict[str, int] = defaultdict(int)
+        unresolved = 0
+        for pin in pincodes:
+            zone = self.pincode_to_zone(pin)
+            if zone:
+                zone_counts[zone] += 1
+            else:
+                unresolved += 1
+        if unresolved:
+            print(f"[OICR] infer_zones: {unresolved}/{len(pincodes)} pincodes had no zone match")
+        return dict(sorted(zone_counts.items(), key=lambda x: -x[1]))
+
+    # ─── Partial zone matrix fill ─────────────────────────────────────────────
+
+    def fill_partial_zone_matrix(
+        self,
+        partial_matrix: Dict[str, Dict[str, float]],
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        Given a partial zone matrix (fewer than 19 origins), fill in missing
+        origins using distance-weighted interpolation from the known origins.
+
+        Strategy per missing origin Z:
+          • Find the K=3 closest KNOWN origins by haversine distance.
+          • For each destination D, compute a distance-weighted average of the
+            known rates, scaled by the ratio dist(Z,D)/dist(known,D).
+          • Apply the same dampening formula as _extrapolate_zone_matrix.
+
+        This preserves the relative structure of the known rates while filling
+        gaps that would otherwise leave the frontend with an incomplete matrix.
+        """
+        known = {z: dests for z, dests in partial_matrix.items()
+                 if z in ZONE_COORDS and dests}
+        if not known:
+            return partial_matrix
+
+        missing = [z for z in ALL_ZONES if z not in known and z in ZONE_COORDS]
+        if not missing:
+            return partial_matrix   # already complete
+
+        print(f"[OICR] Filling {len(missing)} missing origins via interpolation: "
+              f"{sorted(missing)}")
+
+        # Build set of all destination zones that appear in the known matrix
+        all_dest_zones = set()
+        for dests in known.values():
+            all_dest_zones.update(dests.keys())
+
+        filled = {z: dict(dests) for z, dests in partial_matrix.items()}
+        K = 3   # number of nearest-origin neighbours to use
+
+        for missing_z in missing:
+            mz_coord = ZONE_COORDS[missing_z]
+
+            # Sort known origins by distance from missing_z
+            neighbours = sorted(
+                [(kz, _haversine(ZONE_COORDS[kz], mz_coord)) for kz in known],
+                key=lambda x: x[1]
+            )[:K]
+
+            if not neighbours:
+                continue
+
+            dest_rates: Dict[str, float] = {}
+
+            for dest_z in all_dest_zones:
+                if dest_z not in ZONE_COORDS:
+                    continue
+                dest_coord = ZONE_COORDS[dest_z]
+                dist_missing_to_dest = _haversine(mz_coord, dest_coord)
+
+                weighted_sum   = 0.0
+                weight_total   = 0.0
+                for ref_z, ref_dist_to_missing in neighbours:
+                    if dest_z not in known[ref_z]:
+                        continue
+                    ref_rate = known[ref_z][dest_z]
+                    dist_ref_to_dest = _haversine(ZONE_COORDS[ref_z], dest_coord)
+
+                    # Scale ref_rate by relative distance ratio (dampened)
+                    if dist_ref_to_dest > 1.0:
+                        ratio    = dist_missing_to_dest / dist_ref_to_dest
+                        dampened = max(0.5, min(2.5, 0.65 + 0.35 * ratio))
+                        scaled   = ref_rate * dampened
+                    else:
+                        scaled = ref_rate   # essentially the same location
+
+                    # Weight = 1 / (distance to neighbour + 1) to avoid ÷0
+                    w = 1.0 / (ref_dist_to_missing + 1.0)
+                    weighted_sum  += scaled * w
+                    weight_total  += w
+
+                if weight_total > 0:
+                    dest_rates[dest_z] = round(weighted_sum / weight_total, 2)
+
+            if dest_rates:
+                filled[missing_z] = dest_rates
+                print(f"[OICR]   Interpolated {missing_z}: "
+                      f"{len(dest_rates)} dest zones from {[n[0] for n in neighbours]}")
+
+        return filled
+
+    # ─── Rate mode classifier ─────────────────────────────────────────────────
+
+    def classify_rate_mode(
+        self,
+        zone_rates: Dict[str, Dict[str, float]],
+    ) -> Dict[str, Any]:
+        """
+        Determine whether zone_rates look like road, air, or effective (all-in) rates.
+
+        Road freight base:  5 – 30 Rs/kg for nearby zones; up to 50 for far
+        Air freight base:   50 – 200 Rs/kg
+        Effective all-in:   15 – 60 Rs/kg (road base + fuel + docket baked in)
+
+        Returns dict:
+          {
+            "mode": "road" | "air" | "effective" | "unknown",
+            "min_rate": float, "max_rate": float, "avg_rate": float,
+            "warning": str | None,
+          }
+        """
+        all_rates = [
+            r for dests in zone_rates.values()
+            for r in dests.values()
+            if isinstance(r, (int, float)) and r > 0
+        ]
+        if not all_rates:
+            return {"mode": "unknown", "warning": "No rates found"}
+
+        min_r = min(all_rates)
+        max_r = max(all_rates)
+        avg_r = sum(all_rates) / len(all_rates)
+
+        if min_r > 60:
+            mode    = "air"
+            warning = (f"Minimum rate {min_r:.1f} Rs/kg looks like AIR freight. "
+                       f"Road base rates are typically 5–30 Rs/kg.")
+        elif min_r > 30:
+            mode    = "effective"
+            warning = (f"Minimum rate {min_r:.1f} Rs/kg may be an effective/all-in "
+                       f"rate (road base + surcharges). Verify before adding fuel/docket on top.")
+        elif max_r > 200:
+            mode    = "mixed"
+            warning = (f"Rate range {min_r:.1f}–{max_r:.1f} is very wide. "
+                       f"Special-zone rates (X1/X2/X3) may be inflating the max.")
+        else:
+            mode    = "road"
+            warning = None
+
+        return {
+            "mode":     mode,
+            "min_rate": round(min_r, 2),
+            "max_rate": round(max_r, 2),
+            "avg_rate": round(avg_r, 2),
+            "warning":  warning,
+        }
+
+    # ─── 2b. City-rate-card detection ────────────────────────────────────────────
+    # Handles single-origin rate cards like:
+    #   EX DELHI
+    #   Destination | State | Rate (Per Kg Min 30 Kg) | TAT
+    #   AGRA        | UP    | 10                      | 24 Hrs
+    #   AMRITSAR    | Punjab| 12                      | 24 Hrs
+    # ─────────────────────────────────────────────────────────────────────────────
+
+    # Column-header keywords that identify the destination column
+    _DEST_HEADER_RE = re.compile(
+        r'(?i)\b(?:destination|dest|to\s*city|city|location|consignee\s*city|'
+        r'deliver(?:y|ing)?\s*(?:city|location)?|hub|station|branch)\b'
+    )
+    # Column-header keywords that identify a road-rate column
+    _RATE_HEADER_RE = re.compile(
+        r'(?i)\b(?:rate|rates?|charge|charges?|freight|per\s*kg|rs\.?/kg|'
+        r'pricing|amount|cost)\b'
+    )
+    # Column-header keywords for state
+    _STATE_HEADER_RE = re.compile(r'(?i)\b(?:state|province|region)\b')
+    # Origin signals: "EX DELHI", "FROM DELHI", "ORIGIN: MUMBAI"
+    _ORIGIN_SIGNAL_RE = re.compile(
+        r'(?i)\b(?:ex[:\s]+|from[:\s]+|origin[:\s]*|dispatching\s+from[:\s]+|'
+        r'base[:\s]+(?:city|location)[:\s]+)'
+        r'([A-Z][A-Z /&,.-]{2,40})',
+        re.I,
+    )
+
+    def detect_city_rate_card(
+        self,
+        table_rows: List[List[str]],
+        context_text: str = "",
+    ) -> Optional[Dict]:
+        """
+        Parse a single-origin city-rate-card table where each row gives a
+        destination city and a rate-per-kg.  Maps each city to its FC4 zone
+        using city_to_zones(), then averages rates per zone.
+
+        Returns a partial zone matrix (1 origin -> N destinations) on success,
+        or None if the table doesn't match this format.
+
+        The single-origin zone is inferred from context_text (e.g. "EX DELHI")
+        or defaults to N1 (Delhi) since most Indian transporters publish rate cards
+        from their primary Delhi hub.
+        """
+        if not table_rows or len(table_rows) < 3:
+            return None
+
+        # ── Find header row ───────────────────────────────────────────────────
+        header_idx = dest_col = rate_col = state_col = None
+        for i, row in enumerate(table_rows[:12]):
+            cells = [str(c).strip() for c in row]
+            dc = rc = sc = None
+            for j, cell in enumerate(cells):
+                if dc is None and self._DEST_HEADER_RE.search(cell):
+                    dc = j
+                if rc is None and self._RATE_HEADER_RE.search(cell):
+                    rc = j
+                if sc is None and self._STATE_HEADER_RE.search(cell):
+                    sc = j
+            if dc is not None and rc is not None:
+                header_idx = i
+                dest_col   = dc
+                rate_col   = rc
+                state_col  = sc
+                break
+
+        if header_idx is None:
+            return None
+
+        # ── Infer origin zone from context_text ───────────────────────────────
+        origin_zone = "N1"   # default: Delhi (most common hub)
+        m = self._ORIGIN_SIGNAL_RE.search(context_text)
+        if m:
+            origin_city = m.group(1).strip().upper()
+            inferred = self._cell_to_zones(origin_city)
+            if inferred:
+                origin_zone = inferred[0]
+                print(f"[OICR] City-rate-card origin: '{origin_city}' -> {origin_zone}")
+            else:
+                print(f"[OICR] City-rate-card: couldn't resolve origin '{origin_city}', "
+                      f"defaulting to N1")
+        else:
+            # Also try scanning the table preamble rows for EX/FROM/ORIGIN signals
+            for row in table_rows[:header_idx]:
+                row_text = " ".join(str(c).strip() for c in row)
+                m2 = self._ORIGIN_SIGNAL_RE.search(row_text)
+                if m2:
+                    oc = m2.group(1).strip().upper()
+                    inferred = self._cell_to_zones(oc)
+                    if inferred:
+                        origin_zone = inferred[0]
+                        print(f"[OICR] City-rate-card origin (preamble): '{oc}' -> {origin_zone}")
+                    break
+
+        # ── Extract dest -> rate mappings ──────────────────────────────────────
+        zone_rate_samples: Dict[str, List[float]] = defaultdict(list)
+        skipped = 0
+
+        for row in table_rows[header_idx + 1:]:
+            cells = [str(c).strip() for c in row]
+            if dest_col >= len(cells) or rate_col >= len(cells):
+                continue
+
+            dest_cell = cells[dest_col].strip().upper()
+            if not dest_cell or dest_cell in ("DESTINATION", "DEST", "CITY"):
+                continue
+
+            # Map destination city -> zone(s)
+            dest_zones = self._cell_to_zones(dest_cell)
+
+            # Fallback: if cell contains a state name, try state->zone
+            if not dest_zones and state_col is not None and state_col < len(cells):
+                state_cell = cells[state_col].strip().upper()
+                dest_zones = self._cell_to_zones(state_cell)
+
+            if not dest_zones:
+                skipped += 1
+                continue
+
+            # Parse rate
+            try:
+                rate_str = cells[rate_col].replace(",", "").strip()
+                # Strip unit noise like "Rs.", "Rs ", "/kg" etc.
+                rate_str = re.sub(r'(?i)(?:rs\.?\s*|per\s*kg|/\s*kg)', '', rate_str).strip()
+                rate = float(rate_str)
+                if rate <= 0 or rate > 500:
+                    continue
+            except (ValueError, TypeError):
+                continue
+
+            for dz in dest_zones:
+                zone_rate_samples[dz].append(rate)
+
+        if not zone_rate_samples:
+            return None
+
+        if skipped:
+            print(f"[OICR] City-rate-card: {skipped} rows skipped (city not in zone map)")
+
+        # ── Trimmed-mean per dest zone ────────────────────────────────────────
+        def _tmean(vals: list) -> float:
+            s = sorted(vals)
+            n = len(s)
+            if n <= 2:
+                return round(sum(s) / n, 2)
+            cut = max(1, int(n * 0.15))
+            trimmed = s[cut: n - cut] if n > 2 * cut else s
+            return round(sum(trimmed) / len(trimmed), 2)
+
+        origin_rates = {dz: _tmean(rates) for dz, rates in zone_rate_samples.items()}
+
+        print(f"[OICR] City-rate-card: origin={origin_zone} -> "
+              f"{len(origin_rates)} dest zones: "
+              f"{dict(sorted(origin_rates.items()))}")
+
+        # ── Road-rate sanity check ────────────────────────────────────────────
+        # If the min rate across normal zones is > 60 Rs/kg this is almost
+        # certainly an AIR rate section; reject it so road rates aren't
+        # contaminated.
+        normal_rates = [r for z, r in origin_rates.items()
+                        if not z.startswith('X')]
+        if normal_rates and min(normal_rates) > 60:
+            print(f"[OICR] City-rate-card rejected: min normal rate "
+                  f"{min(normal_rates):.1f} > 60 Rs/kg — likely AIR rates")
+            return None
+
+        # ── Extrapolate full 19×19 matrix from this single origin ─────────────
+        full_matrix = self._extrapolate_zone_matrix(origin_zone, origin_rates)
+        print(f"[OICR] City-rate-card: full matrix extrapolated from {origin_zone} "
+              f"-> {len(full_matrix)} origins")
+
+        return full_matrix
 
     # ─── 3. Charge extraction ──────────────────────────────────────────────────
 
@@ -940,7 +1420,7 @@ class OICREngine:
         """
         Build a full N×N zone matrix from a single origin's rates.
 
-        Uses: rate(A→B) ≈ rate(Origin→B) × f(dist(A,B) / dist(Origin,B))
+        Uses: rate(A->B) ≈ rate(Origin->B) × f(dist(A,B) / dist(Origin,B))
 
         Dampening: f(r) = 0.65 + 0.35 × r  (real freight scales sub-linearly)
         Caps:
@@ -1126,12 +1606,19 @@ class OICREngine:
                     flat_rows.append([str(c) for c in row])
             all_table_rows.extend(flat_rows)
 
-            # Try city-based zone matrix
+            # Try city-based zone matrix (from/to grid)
             if not result["zone_matrix"]:
                 zm = self.detect_city_zone_matrix(flat_rows)
                 if zm:
                     result["zone_matrix"] = zm
                     print(f"[OICR] PDF zone matrix: {len(zm)} origins")
+
+            # Try city-rate-card (single-origin, destination+rate rows)
+            if not result["zone_matrix"]:
+                zm = self.detect_city_rate_card(flat_rows, context_text=text)
+                if zm:
+                    result["zone_matrix"] = zm
+                    print(f"[OICR] City-rate-card zone matrix: {len(zm)} origins")
 
             # Charge table extraction — setdefault: table charges don't overwrite each other
             table_charges = self.extract_charges_from_table(flat_rows)
@@ -1145,8 +1632,8 @@ class OICREngine:
             for k, v in text_charges.items():
                 result["charges"].setdefault(k, v)  # text fills gaps only
 
-        # ── 1CFT=Xkg → divisor conversion (highest priority — overrides table 5000) ──
-        # TCI surface formula: 1CFT=10kg → divisor=28317/10=2832 cm³/kg
+        # ── 1CFT=Xkg -> divisor conversion (highest priority — overrides table 5000) ──
+        # TCI surface formula: 1CFT=10kg -> divisor=28317/10=2832 cm³/kg
         # This MUST override the AIR formula (L*B*H/5000) from the same table.
         cft_m = re.search(r'1\s*cft\s*[=:]\s*(\d+(?:\.\d+)?)\s*kg', text.lower())
         if cft_m:
@@ -1157,6 +1644,24 @@ class OICREngine:
                 result["charges"]["divisor"] = float(divisor_sfc)
                 result["charges"]["kFactor"] = float(divisor_sfc)
                 print(f"[OICR] 1CFT={kg_cft}kg -> divisor={divisor_sfc} cm3/kg (SFC surface)")
+
+        # ── Partial zone matrix completion ────────────────────────────────────
+        # If we found some origins but not all 19, fill the gaps now.
+        zm = result["zone_matrix"]
+        if 0 < len(zm) < len(ALL_ZONES):
+            zm = self.fill_partial_zone_matrix(zm)
+            result["zone_matrix"] = zm
+
+        # ── Rate mode classification ───────────────────────────────────────────
+        if result["zone_matrix"]:
+            mode_info = self.classify_rate_mode(result["zone_matrix"])
+            result["_rate_mode"] = mode_info["mode"]
+            if mode_info.get("warning"):
+                print(f"[OICR] Rate mode: {mode_info['mode']} — {mode_info['warning']}")
+            else:
+                print(f"[OICR] Rate mode: {mode_info['mode']} "
+                      f"(min={mode_info['min_rate']} avg={mode_info['avg_rate']:.1f} "
+                      f"max={mode_info['max_rate']} Rs/kg)")
 
         print(f"[OICR] PDF processed: "
               f"company={list(result['company_details'].keys())} "

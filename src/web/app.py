@@ -1202,12 +1202,21 @@ def api_extract_prices():
     Returns: { zoneRates: { originZone: { destZone: rate } }, confidence: 0-100, source: str }
     Called by the AddVendor zone price matrix step when the user uploads a rate card.
     """
+    import time as _time
+    _t0 = _time.time()
+
     f = request.files.get("file")
     if not f or not f.filename:
+        print("[UTSF:extract-prices] ERROR: No file in request")
         return jsonify({"error": "No file uploaded"}), 400
 
     ext = os.path.splitext(f.filename)[1].lower()
+    file_size = len(f.read())
+    f.seek(0)  # reset after size read
+    print(f"[UTSF:extract-prices] Received file='{f.filename}' ext='{ext}' size={file_size/1024:.1f}KB")
+
     if ext not in ALLOWED_EXT:
+        print(f"[UTSF:extract-prices] Rejected — unsupported extension '{ext}'")
         return jsonify({"error": f"Unsupported file type: {ext}"}), 400
 
     import tempfile
@@ -1219,6 +1228,7 @@ def api_extract_prices():
         fd, tmp_path = tempfile.mkstemp(suffix=suffix)
         os.close(fd)
         f.save(tmp_path)
+        print(f"[UTSF:extract-prices] Saved to temp file: {tmp_path}")
 
         # ── Run through our parser stack ──────────────────────────────────────
         sys.path.insert(0, SRC_DIR)
@@ -1229,11 +1239,12 @@ def api_extract_prices():
         text_for_ai = ""
 
         if ext in (".xlsx", ".xls", ".csv", ".tsv"):
-            # Excel/CSV: ExcelParser._auto_detect() extracts zone matrices directly
+            print(f"[UTSF:extract-prices] Using ExcelParser for '{ext}'")
             from parsers.excel_parser import ExcelParser
             parser = ExcelParser()
             result = parser.parse(tmp_path)
             zone_matrix = result.get("data", {}).get("zone_matrix") or {}
+            print(f"[UTSF:extract-prices] ExcelParser result: zone_matrix_keys={list(zone_matrix.keys())[:5]} text_len={len(result.get('text',''))}")
             if zone_matrix:
                 zone_rates = zone_matrix
                 confidence = 80
@@ -1241,75 +1252,135 @@ def api_extract_prices():
             parse_source = "excel"
 
         elif ext == ".pdf":
+            print(f"[UTSF:extract-prices] Using PDFParser for PDF file")
             from parsers.pdf_parser import PDFParser
             parser = PDFParser()
+            _parse_t0 = _time.time()
             result = parser.parse(tmp_path)
+            _parse_elapsed = _time.time() - _parse_t0
             text_for_ai = result.get("text", "")
             parse_source = "pdf"
-            # Try to use zone_matrix already extracted by the parser before going to AI
             pdf_zone_matrix = result.get("data", {}).get("zone_matrix") or {}
+            all_data_keys = list(result.get("data", {}).keys()) if result.get("data") else []
+            print(f"[UTSF:extract-prices] PDFParser done in {_parse_elapsed:.2f}s — text_len={len(text_for_ai)} data_keys={all_data_keys} zone_matrix_zones={list(pdf_zone_matrix.keys())[:5]}")
             if pdf_zone_matrix:
                 zone_rates = pdf_zone_matrix
                 confidence = 65  # lower than Excel since PDF extraction is lossy
+                print(f"[UTSF:extract-prices] PDF zone_matrix found directly — {len(pdf_zone_matrix)} origin zones, confidence=65")
+            else:
+                print(f"[UTSF:extract-prices] PDF has no zone_matrix in parsed data — will try AI fallback if text extracted")
 
         elif ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"):
+            print(f"[UTSF:extract-prices] Using ImageParser (OCR) for '{ext}'")
             from parsers.image_parser import ImageParser
             parser = ImageParser()
             result = parser.parse(tmp_path)
             text_for_ai = result.get("text", "")
             parse_source = "image_ocr"
-            # Same — check for directly extracted zone matrix
             img_zone_matrix = result.get("data", {}).get("zone_matrix") or {}
+            print(f"[UTSF:extract-prices] ImageParser result: text_len={len(text_for_ai)} zone_matrix_zones={list(img_zone_matrix.keys())[:5]}")
             if img_zone_matrix:
                 zone_rates = img_zone_matrix
                 confidence = 55  # OCR accuracy lower than digital PDF
 
         elif ext in (".docx", ".doc"):
+            print(f"[UTSF:extract-prices] Using WordParser for '{ext}'")
             from parsers.word_parser import WordParser
             parser = WordParser()
             result = parser.parse(tmp_path)
             text_for_ai = result.get("text", "")
             parse_source = "word"
             word_zone_matrix = result.get("data", {}).get("zone_matrix") or {}
+            print(f"[UTSF:extract-prices] WordParser result: text_len={len(text_for_ai)} zone_matrix_zones={list(word_zone_matrix.keys())[:5]}")
             if word_zone_matrix:
                 zone_rates = word_zone_matrix
                 confidence = 60
 
         else:
+            print(f"[UTSF:extract-prices] No parser for extension '{ext}'")
             return jsonify({"error": f"Parser not available for {ext}"}), 422
 
         # ── AI fallback: use Ollama to extract zone matrix from text ──────────
         if not zone_rates and text_for_ai:
+            print(f"[UTSF:extract-prices] No zone_rates from parser — trying Ollama AI fallback (text_len={len(text_for_ai)})")
             try:
                 from intelligence.ollama_client import OllamaClient
                 client = OllamaClient()
                 if client.is_available():
+                    print("[UTSF:extract-prices] Ollama is available — requesting zone matrix extraction")
                     ai_result = client.extract_zone_matrix(text_for_ai[:6000])
                     if ai_result and isinstance(ai_result, dict):
                         zone_rates = ai_result
                         confidence = 45
+                        print(f"[UTSF:extract-prices] Ollama returned {len(ai_result)} zones, confidence=45")
+                    else:
+                        print(f"[UTSF:extract-prices] Ollama returned empty/invalid result: {type(ai_result)}")
+                else:
+                    print("[UTSF:extract-prices] Ollama not available — skipping AI fallback")
             except Exception as ai_err:
-                print(f"[extract-prices] AI fallback failed: {ai_err}")
+                print(f"[UTSF:extract-prices] AI fallback failed: {ai_err}")
+        elif not zone_rates:
+            print(f"[UTSF:extract-prices] No zone_rates and no text extracted — cannot extract rates from this file")
+
+        total_elapsed = _time.time() - _t0
+
+        # ── Collect enrichment metadata from PDF result ───────────────────────
+        parsed_data = result.get("data", {}) if 'result' in dir() else {}
+        zones_extrapolated = parsed_data.get("_zones_extrapolated", [])
+        rate_mode          = parsed_data.get("_rate_mode", "")
+        zone_distribution  = parsed_data.get("zone_distribution", {})
+        inferred_zones     = parsed_data.get("inferred_served_zones", [])
+
+        # Raise confidence for extrapolated zones: direct=65, mixed=55, full=65
+        if zone_rates and zones_extrapolated:
+            direct_count = len(zone_rates) - len(zones_extrapolated)
+            if direct_count >= 10:
+                confidence = 62   # good direct coverage, rest extrapolated
+            elif direct_count >= 5:
+                confidence = 55   # partial direct coverage
+            else:
+                confidence = 45   # mostly extrapolated — treat like AI fallback
+
+        print(f"[UTSF:extract-prices] RESULT: zonesFound={len(zone_rates)} "
+              f"zonesExtrapolated={len(zones_extrapolated)} "
+              f"rateMode={rate_mode} confidence={confidence} "
+              f"source='{parse_source}' total_time={total_elapsed:.2f}s")
+
+        # Compose a human-readable message
+        if zone_rates:
+            direct = len(zone_rates) - len(zones_extrapolated)
+            extrap = len(zones_extrapolated)
+            msg_parts = [f"Extracted {direct} origin zones (road/{rate_mode or 'surface'})"]
+            if extrap:
+                msg_parts.append(f"{extrap} zones filled by distance interpolation")
+            message = "; ".join(msg_parts)
+        elif inferred_zones:
+            message = (f"No rate matrix found — transporter serves "
+                       f"{len(inferred_zones)} zones based on pincodes: "
+                       f"{', '.join(inferred_zones[:8])}")
+        else:
+            message = "Could not extract zone rates from this file — try a cleaner Excel rate card"
 
         return jsonify({
-            "zoneRates": zone_rates,
-            "confidence": confidence,
-            "source": parse_source,
-            "zonesFound": len(zone_rates),
-            "message": (
-                f"Extracted {len(zone_rates)} origin zones from {parse_source}"
-                if zone_rates else
-                "Could not extract zone rates from this file — try a cleaner Excel rate card"
-            ),
+            "zoneRates":          zone_rates,
+            "confidence":         confidence,
+            "source":             parse_source,
+            "zonesFound":         len(zone_rates),
+            "zonesExtrapolated":  zones_extrapolated,
+            "rateMode":           rate_mode,
+            "zoneDistribution":   zone_distribution,
+            "inferredZones":      inferred_zones,
+            "message":            message,
         })
 
     except Exception as exc:
         import traceback
-        print(f"[extract-prices] Error: {exc}\n{traceback.format_exc()}")
+        print(f"[UTSF:extract-prices] EXCEPTION: {exc}\n{traceback.format_exc()}")
         return jsonify({"error": str(exc), "zoneRates": {}, "confidence": 0}), 500
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
+            print(f"[UTSF:extract-prices] Temp file cleaned up: {tmp_path}")
 
 
 # ─── Routes: Bulk Generate (synchronous, frontend-friendly) ──────────────────

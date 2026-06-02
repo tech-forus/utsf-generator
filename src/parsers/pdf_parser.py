@@ -269,11 +269,12 @@ class PDFParser(BaseParser):
             print(f"[PDFParser] WARNING: All extraction methods exhausted. "
                   f"File may be encrypted or empty.")
 
-        print(f"[PDFParser] Final: {len(text)} chars via {method}")
+        print(f"[PDFParser] Final extraction: {len(text)} chars via '{method}', {len(tables)} tables")
 
         # ── Extract structured data ───────────────────────────────────────────
         data = self._extract_data(text, tables, fname)
 
+        print(f"[PDFParser] parse() done — zone_matrix={len(data.get('zone_matrix') or {})} origins, text_len={len(text)}")
         return {"text": text, "tables": tables, "data": data}
 
     # ─── Text/table extractors ────────────────────────────────────────────────
@@ -658,6 +659,12 @@ class PDFParser(BaseParser):
         # Pre-process tables BEFORE OICR sees them:
         #   1. Strip "By Air" sub-sections from mixed mode tables
         #   2. Pick SFC row from multi-service charge rows
+        #
+        # IMPORTANT: Save originals before mode-split for city-rate-card parsing.
+        # When a table has [By Air header + air data] followed by [By Road data],
+        # mode-split strips the header row (it's in the air section).  The original
+        # tables still carry the header, so detect_city_rate_card can find it there.
+        _original_tables = [list(t) for t in tables]   # shallow copy per table
         tables = [self._split_air_road_table(t) for t in tables]
         tables = [self._pick_surface_row(t) for t in tables]
 
@@ -794,6 +801,39 @@ class PDFParser(BaseParser):
                     for k, v in ch.items():
                         data["charges"].setdefault(k, v)
 
+            # ── City-rate-card fallback (if still no zone matrix) ─────────────
+            # Handles single-origin rate cards (Destination|State|Rate/kg rows).
+            # Uses ORIGINAL tables (pre-mode-split) because mode-split may have
+            # removed the "Destination|State|Rate|TAT" header row (it was in the
+            # "By Air" sub-section of a mixed-mode table).
+            # detect_city_rate_card has its own road-rate sanity filter (>60 Rs/kg
+            # rows are rejected), so it's safe to pass it the full unsplit table.
+            if not data.get("zone_matrix"):
+                try:
+                    from parsers.oicr_engine import get_oicr_engine
+                    oicr = get_oicr_engine()
+                    # Try original (pre-split) tables first — preserves headers
+                    crc_sources = list(_original_tables)
+                    # Also try road-text rows as last resort
+                    road_text = self._strip_air_mode_from_text(
+                        _sections_map.get("AIR_FREIGHT", []), text
+                    )
+                    road_rows = self._text_to_rows(road_text)
+                    if road_rows:
+                        crc_sources.append(road_rows)
+
+                    for src in crc_sources:
+                        if not src:
+                            continue
+                        zm = oicr.detect_city_rate_card(src, context_text=text)
+                        if zm:
+                            data["zone_matrix"] = zm
+                            print(f"[PDFParser] City-rate-card zone matrix: "
+                                  f"{len(zm)} origins")
+                            break
+                except Exception as _crc_err:
+                    print(f"[PDFParser] City-rate-card fallback failed: {_crc_err}")
+
             # Pincodes: extract from PINCODE_LIST and ODA_LIST sections
             pin_text = ""
             for cat in ("PINCODE_LIST", "ODA_LIST"):
@@ -810,8 +850,128 @@ class PDFParser(BaseParser):
         if data.get("oda_pincodes"):
             data["oda_pincodes"] = list(dict.fromkeys(data["oda_pincodes"]))
 
+        # ── Zone matrix enrichment: validate, infer, and complete ─────────────
+        data = self._enrich_zone_matrix(data)
+
         # ── Passive learning: auto-confirm high-confidence extractions ────────
         self._passive_learn(data)
+
+        # ── Summary log ──────────────────────────────────────────────────────
+        print(
+            f"[PDFParser] _extract_data summary: "
+            f"zone_matrix={len(data.get('zone_matrix') or {})} origins | "
+            f"charges={list((data.get('charges') or {}).keys())} | "
+            f"served_pincodes={len(data.get('served_pincodes') or [])} | "
+            f"oda_pincodes={len(data.get('oda_pincodes') or [])} | "
+            f"company_details={'yes' if data.get('company_details') else 'no'}"
+        )
+
+        return data
+
+    # ─── Zone matrix enrichment ──────────────────────────────────────────────
+
+    _ALL_ZONES_SET = frozenset([
+        "N1","N2","N3","N4","S1","S2","S3","S4",
+        "E1","E2","W1","W2","C1","C2","NE1","NE2","X1","X2","X3",
+    ])
+
+    def _enrich_zone_matrix(self, data: Dict) -> Dict:
+        """
+        Post-extraction zone matrix enrichment. Runs after all other parsers have
+        had their chance. Goals:
+
+        1. Validate rate mode (road vs air vs effective).
+        2. Use served_pincodes to compute zone distribution — helps confirm which
+           zones the transporter actually covers and detect missing zone rows.
+        3. If zone matrix is partial (< 19 origins), fill missing origins via
+           distance interpolation from the known origins.
+        4. If zone matrix is empty but pincodes were found, report zone distribution
+           so the caller can build a partial matrix from a rate card elsewhere.
+        5. Cross-check zone matrix keys against pincode distribution to flag
+           suspicious zone assignments.
+        """
+        try:
+            from parsers.oicr_engine import get_oicr_engine, ALL_ZONES
+            oicr = get_oicr_engine()
+        except Exception as e:
+            print(f"[PDFParser] _enrich_zone_matrix: OICR unavailable: {e}")
+            return data
+
+        zone_matrix    = data.get("zone_matrix") or {}
+        served_pincodes = data.get("served_pincodes") or []
+        oda_pincodes   = data.get("oda_pincodes") or []
+
+        # ── 1. Rate mode classification ───────────────────────────────────────
+        if zone_matrix:
+            mode_info = oicr.classify_rate_mode(zone_matrix)
+            data["_rate_mode"] = mode_info["mode"]
+            if mode_info.get("warning"):
+                print(f"[PDFParser] Rate mode: {mode_info['mode']} — "
+                      f"{mode_info['warning']}")
+            else:
+                print(f"[PDFParser] Rate mode: {mode_info['mode']} "
+                      f"(min={mode_info['min_rate']} "
+                      f"avg={mode_info['avg_rate']:.1f} "
+                      f"max={mode_info['max_rate']} Rs/kg)")
+
+        # ── 2. Pincode zone distribution ──────────────────────────────────────
+        all_pincodes = list(set(served_pincodes + oda_pincodes))
+        if len(all_pincodes) >= 10:
+            zone_dist = oicr.infer_zones_from_pincodes(all_pincodes)
+            if zone_dist:
+                total_pins = sum(zone_dist.values())
+                top_zones  = sorted(zone_dist.items(), key=lambda x: -x[1])
+                dist_str   = " | ".join(
+                    f"{z}={c}({c*100//total_pins}%)"
+                    for z, c in top_zones[:8]
+                )
+                print(f"[PDFParser] Pincode zone distribution ({total_pins} pincodes): "
+                      f"{dist_str}")
+                data["zone_distribution"] = zone_dist
+
+                # ── 2a. Cross-check: warn if zone matrix has origins not in
+                #        pincode coverage (possible ghost zones)
+                if zone_matrix:
+                    ghost_zones = [
+                        z for z in zone_matrix
+                        if z not in zone_dist and z not in ("X1","X2","X3")
+                    ]
+                    if ghost_zones:
+                        print(f"[PDFParser] NOTE: zone matrix has origins with no "
+                              f"pincodes in zone_distribution: {ghost_zones} "
+                              f"(may be extrapolated or distant hubs — verify)")
+
+                # ── 2b. If zone matrix is empty, use pincodes to build partial
+                #        zone list so the frontend knows which zones are served
+                if not zone_matrix and zone_dist:
+                    data["inferred_served_zones"] = [z for z, _ in top_zones]
+                    print(f"[PDFParser] No rate matrix found — inferred "
+                          f"{len(data['inferred_served_zones'])} served zones "
+                          f"from pincodes")
+
+        # ── 3. Partial zone matrix completion ─────────────────────────────────
+        if zone_matrix:
+            found_count   = len(zone_matrix)
+            missing_count = len(self._ALL_ZONES_SET - set(zone_matrix.keys()))
+            if missing_count > 0:
+                print(f"[PDFParser] Zone matrix has {found_count} origins; "
+                      f"{missing_count} missing — filling via interpolation")
+                try:
+                    completed = oicr.fill_partial_zone_matrix(zone_matrix)
+                    if len(completed) > found_count:
+                        data["zone_matrix"] = completed
+                        data["_zones_extrapolated"] = sorted(
+                            self._ALL_ZONES_SET - set(zone_matrix.keys())
+                        )
+                        print(f"[PDFParser] Zone matrix completed: "
+                              f"{found_count} direct + "
+                              f"{len(completed) - found_count} extrapolated = "
+                              f"{len(completed)} total origins")
+                except Exception as e:
+                    print(f"[PDFParser] Zone matrix completion failed: {e}")
+            else:
+                print(f"[PDFParser] Zone matrix complete: all "
+                      f"{found_count} origins present")
 
         return data
 

@@ -655,7 +655,10 @@ class PDFParser(BaseParser):
             print(f"[PDFParser] Section pre-filter unavailable: {_seg_err}")
 
         # ── OICR engine — runs on section-filtered text, not full text ────────
-        # Pre-process tables BEFORE OICR sees them — pick SFC row from multi-service tables
+        # Pre-process tables BEFORE OICR sees them:
+        #   1. Strip "By Air" sub-sections from mixed mode tables
+        #   2. Pick SFC row from multi-service charge rows
+        tables = [self._split_air_road_table(t) for t in tables]
         tables = [self._pick_surface_row(t) for t in tables]
 
         _OICR_SANITY = {
@@ -752,6 +755,12 @@ class PDFParser(BaseParser):
                 # Fallback: full text if segmenter found no CHARGES sections
                 charge_text = text
 
+            # Strip "By Air ..." blocks so air-mode minWeight / charges don't bleed in.
+            # The section_segmenter may classify air blocks as TRANSIT_DAYS rather than
+            # AIR_FREIGHT (TAT columns score high), so use direct text splitting as well.
+            charge_text = self._strip_air_mode_from_text(
+                sections_map.get("AIR_FREIGHT", []), charge_text
+            )
             text_charges = self._extract_charges_from_text(charge_text)
             if text_charges:
                 data.setdefault("charges", {})
@@ -822,6 +831,103 @@ class PDFParser(BaseParser):
                     record_passive_confirmation("charge", field, field, confidence=0.75)
         except Exception:
             pass  # passive learning is best-effort
+
+    # ─── Service-type charge table row picker ────────────────────────────────
+
+    # ─── Air/Road table splitter ─────────────────────────────────────────────
+
+    _AIR_CELL_RE  = re.compile(r'^\s*by\s*air\b', re.I)
+    _ROAD_CELL_RE = re.compile(r'^\s*by\s*(?:road|surface|ground)\b', re.I)
+
+    def _split_air_road_table(self, table: List[List[str]]) -> List[List[str]]:
+        """
+        Many Indian carrier PDFs embed "By Air" and "By Road" sub-section headers
+        as rows inside a single pdfplumber table.  This method keeps only road
+        segments, discarding air segments.  Tables with no mode markers are returned
+        unchanged.
+        """
+        mode_rows: List[tuple] = []
+        for ri, row in enumerate(table):
+            for cell in row:
+                if cell and isinstance(cell, str):
+                    s = cell.strip()
+                    if self._AIR_CELL_RE.match(s):
+                        mode_rows.append((ri, "air"))
+                        break
+                    if self._ROAD_CELL_RE.match(s):
+                        mode_rows.append((ri, "road"))
+                        break
+
+        if not mode_rows:
+            return table
+
+        segments = []
+        for i, (ri, mode) in enumerate(mode_rows):
+            end = mode_rows[i + 1][0] if i + 1 < len(mode_rows) else len(table)
+            segments.append((ri, end, mode))
+
+        preamble = table[:mode_rows[0][0]]
+        road_rows: List[List[str]] = []
+        air_count = road_count = 0
+        for start, end, mode in segments:
+            if mode == "road":
+                road_rows.extend(table[start:end])
+                road_count += 1
+            else:
+                air_count += 1
+
+        print(f"[PDFParser] Mode-split: stripped {air_count} AIR segment(s), "
+              f"kept {road_count} ROAD segment(s)")
+
+        return preamble + road_rows if road_rows else preamble
+
+    # ─── Air-mode text stripper ──────────────────────────────────────────────
+
+    _AIR_SECTION_TEXT_RE  = re.compile(r'(?i)(?:^|\n)(?:by\s+air\b[^\n]*)\n')
+    _ROAD_SECTION_TEXT_RE = re.compile(r'(?i)(?:^|\n)(?:by\s+(?:road|surface|ground)\b[^\n]*)\n')
+
+    def _strip_air_mode_from_text(self, air_sections: list, text: str) -> str:
+        """
+        Remove "By Air ..." blocks from text so charge regexes (especially
+        minWeight) don't pick up air-mode values.
+
+        Pass 1: strip section_segmenter-identified AIR_FREIGHT blocks.
+        Pass 2: split on inline "By Air..." / "By Road..." line markers.
+        """
+        if air_sections:
+            air_texts = {s.text for s in air_sections}
+            remaining = "\n\n".join(
+                chunk for chunk in text.split("\n\n")
+                if chunk.strip() not in air_texts
+            )
+            if remaining.strip() != text.strip():
+                print(f"[PDFParser] Air-section strip: removed "
+                      f"{len(air_sections)} AIR_FREIGHT section(s) from charge text")
+                return remaining
+
+        markers: List[tuple] = []
+        for m in self._AIR_SECTION_TEXT_RE.finditer(text):
+            markers.append((m.start(), "air"))
+        for m in self._ROAD_SECTION_TEXT_RE.finditer(text):
+            markers.append((m.start(), "road"))
+
+        if not markers:
+            return text
+
+        markers.sort(key=lambda x: x[0])
+        kept: List[str] = [text[:markers[0][0]]]
+        for i, (pos, mode) in enumerate(markers):
+            seg_end = markers[i + 1][0] if i + 1 < len(markers) else len(text)
+            if mode == "road":
+                kept.append(text[pos:seg_end])
+
+        result = "".join(kept)
+        if result.strip() != text.strip():
+            air_cnt  = sum(1 for _, m in markers if m == "air")
+            road_cnt = sum(1 for _, m in markers if m == "road")
+            print(f"[PDFParser] Air-text strip: removed {air_cnt} air block(s), "
+                  f"kept {road_cnt} road block(s)")
+        return result
 
     # ─── Service-type charge table row picker ────────────────────────────────
 

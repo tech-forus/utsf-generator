@@ -1615,6 +1615,30 @@ class ExcelParser(BaseParser):
         """
         charges: Dict = {}
 
+        # ── Early bail-out: destination-rate tables are NOT charge tables ─────
+        # Tables with "Destination | State | Rate | TAT" structure contain city→rate
+        # routing data. Running charge extraction on them causes city names to be
+        # fuzzy-matched to charge fields (e.g. "amritsar" → greenTax at 0.64 conf).
+        # Two detection passes:
+        #   A. Header scan (up to row 20) — catches explicit "Destination" + TAT/Rate header
+        #   B. Data-pattern check — catches tables where city data starts at row 0
+        _DEST_HDR_RE = re.compile(r'\bdestination\b', re.I)
+        _TAT_HDR_RE  = re.compile(
+            r'\btat\b|\btransit\s*(?:time|days?)\b|\bdelivery\s*(?:time|days?)\b', re.I
+        )
+        _RATE_HDR_RE = re.compile(r'\brates?\b|\bper\s*kg\b|\bmin(?:imum)?\s*weight\b', re.I)
+        for _row in rows[:20]:
+            _rt = " ".join(str(c) for c in _row if c)
+            if _DEST_HDR_RE.search(_rt) and (_TAT_HDR_RE.search(_rt) or _RATE_HDR_RE.search(_rt)):
+                return {}
+        _TIME_RE = re.compile(r'\b\d+\s*[-–]\s*\d+\s*(?:hrs?|days?)\b', re.I)
+        _time_hits = sum(
+            1 for _row in [r for r in rows if any(str(c).strip() for c in r)][:8]
+            if _TIME_RE.search(" ".join(str(c) for c in _row if c))
+        )
+        if _time_hits >= 3:
+            return {}
+
         # First pass: ODA structured table detection
         # Try distance×weight matrix first (most specific), then weight-band
         oda_matrix = self._try_parse_oda_distance_matrix(rows, sheet_name)

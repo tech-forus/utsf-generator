@@ -1658,10 +1658,12 @@ class OICREngine:
                         _crc_origin = origin
                     if origin == _crc_origin:
                         for dest, rate in rates.items():
+                            # First-seen rate wins: specific city rates (e.g. AGRA=10)
+                            # come before catch-all rows (REST OF INDIA=25).
+                            # Never overwrite a zone that already has a rate —
+                            # catch-alls should only fill zones not yet seen.
                             if dest not in _crc_rates:
                                 _crc_rates[dest] = rate
-                            else:
-                                _crc_rates[dest] = round((_crc_rates[dest] + rate) / 2, 3)
 
             # Charge table extraction — setdefault: table charges don't overwrite each other
             table_charges = self.extract_charges_from_table(flat_rows)

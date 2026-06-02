@@ -178,6 +178,57 @@ def _haversine(c1: Tuple[float, float], c2: Tuple[float, float]) -> float:
     return 6371 * 2 * math.asin(math.sqrt(a))
 
 
+# ─── Smart zone rate aggregation ─────────────────────────────────────────────
+# Strategy when multiple city-level rates map to the same FC4 zone:
+#
+#   • spread ≤ SPREAD_THRESHOLD (5 Rs/kg):
+#       Use the MAXIMUM — small variance means all cities cost roughly the
+#       same; using the higher price is conservative (avoids under-quoting).
+#       Example: AGRA=10, AMRITSAR=12 → spread=2 ≤ 5 → zone rate = 12
+#
+#   • spread > SPREAD_THRESHOLD:
+#       Use the ARITHMETIC MEAN of all samples — large variance indicates
+#       genuine geographic/distance variation within the zone; averaging
+#       gives a fair mid-point rather than over/under-quoting.
+#       Example: JAMMU=18, SRINAGAR=25 → spread=7 > 5 → zone rate = 21.5
+#
+# Both cases log the decision so the operator can audit every zone.
+
+_SPREAD_THRESHOLD = 5.0   # Rs/kg — tune here if needed
+
+
+def _smart_zone_rate(samples: List[float], zone: str = "") -> float:
+    """
+    Aggregate multiple per-city rates into a single zone rate.
+
+    Rules (applied after deduplication and basic outlier check):
+      spread ≤ 5 Rs → max   (conservative; small variation, use upper bound)
+      spread > 5 Rs → mean  (large variation; arithmetic mean of all samples)
+
+    Returns 0.0 for empty input.
+    """
+    if not samples:
+        return 0.0
+    if len(samples) == 1:
+        return round(samples[0], 2)
+
+    s       = sorted(samples)
+    min_r   = s[0]
+    max_r   = s[-1]
+    spread  = max_r - min_r
+
+    if spread <= _SPREAD_THRESHOLD:
+        result = round(max_r, 2)
+        rule   = f"max (spread {spread:.1f} <= {_SPREAD_THRESHOLD})"
+    else:
+        result = round(sum(s) / len(s), 2)
+        rule   = f"mean (spread {spread:.1f} > {_SPREAD_THRESHOLD})"
+
+    if zone:
+        print(f"[OICR] Zone {zone:4s}: {len(s)} samples [{min_r}..{max_r}] -> {result} ({rule})")
+    return result
+
+
 # ─── State (full name + common abbreviations/typos) -> zone(s) ────────────────
 # Used by detect_city_rate_card to handle state-column lookups.
 # Canonical spellings AND the most common misspellings that appear in rate cards.
@@ -533,20 +584,8 @@ class OICREngine:
             print(f"[OICR] Station-rate: only pincodes ({len(served_pincodes)}) — no rates")
             return {"served_pincodes": list(set(served_pincodes))}
 
-        # ── Trimmed mean per destination zone ────────────────────────────────
-        # Simple average lets a single high-rate remote station (Leh, Andaman)
-        # drag the zone average up. Trimmed mean removes top/bottom 15% first.
-        def _trimmed_mean(vals: list) -> float:
-            s = sorted(vals)
-            n = len(s)
-            if n <= 2:
-                return round(sum(s) / n, 2)
-            cut = max(1, int(n * 0.15))
-            trimmed = s[cut: n - cut] if n > 2 * cut else s
-            return round(sum(trimmed) / len(trimmed), 2)
-
         origin_rates: Dict[str, float] = {
-            dz: _trimmed_mean(rates)
+            dz: _smart_zone_rate(rates, dz)
             for dz, rates in zone_rate_samples.items()
         }
 
@@ -647,18 +686,8 @@ class OICREngine:
             print(f"[OICR] Station-rate: no zone rates extracted (pincodes={len(served_pincodes)})")
             return {"served_pincodes": served_pincodes} if served_pincodes else None
 
-        # ── Trimmed mean per destination zone (DataFrame variant) ───────────────
-        def _tmean(vals: list) -> float:
-            s = sorted(vals)
-            n = len(s)
-            if n <= 2:
-                return round(sum(s) / n, 2)
-            cut = max(1, int(n * 0.15))
-            trimmed = s[cut: n - cut] if n > 2 * cut else s
-            return round(sum(trimmed) / len(trimmed), 2)
-
         origin_rates: Dict[str, float] = {
-            dz: _tmean(rates) for dz, rates in zone_rate_samples.items()
+            dz: _smart_zone_rate(rates, dz) for dz, rates in zone_rate_samples.items()
         }
 
         print(f"[OICR] Station-rate: {origin_zone} -> {len(origin_rates)} zones: "
@@ -751,8 +780,8 @@ class OICREngine:
         first_dest_col = min(dest_zones.keys())
         from_col = max(0, first_dest_col - 1)
 
-        # ── Parse data rows ───────────────────────────────────────────────────
-        zone_rates: Dict[str, Dict[str, float]] = {}
+        # ── Parse data rows — collect samples then apply smart aggregation ──────
+        zone_samples: Dict[str, Dict[str, List[float]]] = {}
         max_dest_col = max(dest_zones.keys())
 
         for i, row in enumerate(table_rows):
@@ -767,11 +796,10 @@ class OICREngine:
             from_zones = self._cell_to_zones(from_cell)
 
             if not from_zones:
-                # "USER" / blank = single-origin with context
                 if "user" in from_cell.lower() or from_cell in ("", "-", "NONE"):
                     from_zones = self._cell_to_zones(context.upper()) or ["E1"]
                 else:
-                    continue   # unresolvable origin — skip row
+                    continue
 
             # Extract rates for each destination column
             for col_idx, d_zones in dest_zones.items():
@@ -788,15 +816,19 @@ class OICREngine:
                     continue
 
                 for fz in from_zones:
-                    zone_rates.setdefault(fz, {})
+                    zone_samples.setdefault(fz, {})
                     for dz in d_zones:
-                        if dz in zone_rates[fz]:
-                            # Running average when multiple rows map same pair
-                            zone_rates[fz][dz] = round(
-                                (zone_rates[fz][dz] + rate) / 2, 3)
-                        else:
-                            zone_rates[fz][dz] = rate
+                        zone_samples[fz].setdefault(dz, []).append(rate)
 
+        if not zone_samples:
+            return None
+
+        # Apply smart rate aggregation per (origin, dest) pair
+        zone_rates: Dict[str, Dict[str, float]] = {
+            fz: {dz: _smart_zone_rate(samples, f"{fz}->{dz}")
+                 for dz, samples in dests.items()}
+            for fz, dests in zone_samples.items()
+        }
         if not zone_rates:
             return None
 
@@ -1225,17 +1257,9 @@ class OICREngine:
         if skipped:
             print(f"[OICR] City-rate-card: {skipped} rows skipped (city not in zone map)")
 
-        # ── Trimmed-mean per dest zone ────────────────────────────────────────
-        def _tmean(vals: list) -> float:
-            s = sorted(vals)
-            n = len(s)
-            if n <= 2:
-                return round(sum(s) / n, 2)
-            cut = max(1, int(n * 0.15))
-            trimmed = s[cut: n - cut] if n > 2 * cut else s
-            return round(sum(trimmed) / len(trimmed), 2)
-
-        origin_rates = {dz: _tmean(rates) for dz, rates in zone_rate_samples.items()}
+        # ── Smart rate per dest zone ──────────────────────────────────────────
+        # spread ≤ 5 Rs → max  |  spread > 5 Rs → arithmetic mean
+        origin_rates = {dz: _smart_zone_rate(rates, dz) for dz, rates in zone_rate_samples.items()}
 
         print(f"[OICR] City-rate-card: origin={origin_zone} -> "
               f"{len(origin_rates)} dest zones: "

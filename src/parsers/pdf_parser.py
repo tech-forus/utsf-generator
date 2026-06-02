@@ -949,29 +949,15 @@ class PDFParser(BaseParser):
                           f"{len(data['inferred_served_zones'])} served zones "
                           f"from pincodes")
 
-        # ── 3. Partial zone matrix completion ─────────────────────────────────
+        # ── 3. Log coverage — no gap-filling, only report what vendor provided ──
         if zone_matrix:
             found_count   = len(zone_matrix)
             missing_count = len(self._ALL_ZONES_SET - set(zone_matrix.keys()))
             if missing_count > 0:
-                print(f"[PDFParser] Zone matrix has {found_count} origins; "
-                      f"{missing_count} missing — filling via interpolation")
-                try:
-                    completed = oicr.fill_partial_zone_matrix(zone_matrix)
-                    if len(completed) > found_count:
-                        data["zone_matrix"] = completed
-                        data["_zones_extrapolated"] = sorted(
-                            self._ALL_ZONES_SET - set(zone_matrix.keys())
-                        )
-                        print(f"[PDFParser] Zone matrix completed: "
-                              f"{found_count} direct + "
-                              f"{len(completed) - found_count} extrapolated = "
-                              f"{len(completed)} total origins")
-                except Exception as e:
-                    print(f"[PDFParser] Zone matrix completion failed: {e}")
+                print(f"[PDFParser] Zone matrix: {found_count} origin(s) from vendor; "
+                      f"{missing_count} origin(s) not in document (left blank)")
             else:
-                print(f"[PDFParser] Zone matrix complete: all "
-                      f"{found_count} origins present")
+                print(f"[PDFParser] Zone matrix: all 19 origins present")
 
         return data
 

@@ -553,12 +553,9 @@ class OICREngine:
         print(f"[OICR] Station-rate: {origin_zone}->{len(origin_rates)} zones: "
               f"{dict(sorted(origin_rates.items()))}")
 
-        # Build full matrix via extrapolation
-        full_matrix = self._extrapolate_zone_matrix(origin_zone, origin_rates)
-        print(f"[OICR] Full matrix extrapolated: {len(full_matrix)} origin zones")
-
+        # Return only the vendor's actual rates — single origin row, no extrapolation.
         return {
-            "zone_matrix":      full_matrix,
+            "zone_matrix":      {origin_zone: origin_rates},
             "served_pincodes":  list(set(served_pincodes)),
         }
 
@@ -667,12 +664,9 @@ class OICREngine:
         print(f"[OICR] Station-rate: {origin_zone} -> {len(origin_rates)} zones: "
               f"{sorted(origin_rates.items())}")
 
-        # Extrapolate full matrix from single origin using distance ratios
-        full_matrix = self._extrapolate_zone_matrix(origin_zone, origin_rates)
-        print(f"[OICR] Extrapolated full matrix: {len(full_matrix)} origin zones")
-
+        # Return only the vendor's actual rates — no extrapolation to other origins.
         return {
-            "zone_matrix": full_matrix,
+            "zone_matrix": {origin_zone: origin_rates},
             "served_pincodes": list(set(served_pincodes)),
         }
 
@@ -813,14 +807,7 @@ class OICREngine:
         if not zone_rates:
             return None
 
-        # ── If only 1 origin, extrapolate full matrix ─────────────────────────
-        if len(zone_rates) == 1:
-            orig = list(zone_rates.keys())[0]
-            zone_rates = self._extrapolate_zone_matrix(orig, zone_rates[orig])
-        # ── If partial (< 19 origins), fill gaps ─────────────────────────────
-        elif len(zone_rates) < len(ALL_ZONES):
-            zone_rates = self.fill_partial_zone_matrix(zone_rates)
-
+        # Return only what the vendor explicitly provided — no gap-filling.
         print(f"[OICR] City zone matrix: {len(zone_rates)} origins extracted")
         return zone_rates
 
@@ -1072,9 +1059,11 @@ class OICREngine:
         if not table_rows or len(table_rows) < 3:
             return None
 
-        # ── Find header row ───────────────────────────────────────────────────
-        header_idx = dest_col = rate_col = state_col = None
-        for i, row in enumerate(table_rows[:12]):
+        # ── Find ALL header rows (a table can have multiple sections) ────────────
+        # Search the whole table — pdfplumber sometimes puts multiple "By Road"
+        # sub-sections in a single table; each section has its own header.
+        header_segments: List[tuple] = []   # list of (header_idx, dest_col, rate_col, state_col)
+        for i, row in enumerate(table_rows):
             cells = [str(c).strip() for c in row]
             dc = rc = sc = None
             for j, cell in enumerate(cells):
@@ -1085,14 +1074,13 @@ class OICREngine:
                 if sc is None and self._STATE_HEADER_RE.search(cell):
                     sc = j
             if dc is not None and rc is not None:
-                header_idx = i
-                dest_col   = dc
-                rate_col   = rc
-                state_col  = sc
-                break
+                header_segments.append((i, dc, rc, sc))
 
-        if header_idx is None:
+        if not header_segments:
             return None
+
+        # Use first header to detect the origin (preamble scan)
+        header_idx, dest_col, rate_col, state_col = header_segments[0]
 
         # ── Infer origin zone from context_text ───────────────────────────────
         origin_zone = "N1"   # default: Delhi (most common hub)
@@ -1119,44 +1107,86 @@ class OICREngine:
                         print(f"[OICR] City-rate-card origin (preamble): '{oc}' -> {origin_zone}")
                     break
 
-        # ── Extract dest -> rate mappings ──────────────────────────────────────
+        # ── Extract dest -> rate mappings across all header sections ─────────────
+        # Build row ranges per section: each section spans from its header+1
+        # to just before the next header (or end of table).
         zone_rate_samples: Dict[str, List[float]] = defaultdict(list)
         skipped = 0
 
-        for row in table_rows[header_idx + 1:]:
-            cells = [str(c).strip() for c in row]
-            if dest_col >= len(cells) or rate_col >= len(cells):
-                continue
+        # Regex to detect air-mode section label rows
+        _AIR_LABEL_RE  = re.compile(r'(?i)\bby\s+air\b')
+        _ROAD_LABEL_RE = re.compile(r'(?i)\bby\s+(?:road|surface|ground|express)\b')
 
-            dest_cell = cells[dest_col].strip().upper()
-            if not dest_cell or dest_cell in ("DESTINATION", "DEST", "CITY"):
-                continue
+        # Build section ranges and determine mode for each section.
+        # Scan backwards from each header to find the nearest mode label above it.
+        sections = []
+        for si, (hi, dc, rc, sc) in enumerate(header_segments):
+            start = hi + 1
+            end   = header_segments[si + 1][0] if si + 1 < len(header_segments) else len(table_rows)
+            # Determine section mode: look for "By Air" / "By Road" label above this header
+            mode = "road"   # default — assume road unless explicitly labelled as air
+            for check_row in reversed(table_rows[max(0, hi - 5):hi + 1]):
+                row_text = " ".join(str(c).strip() for c in check_row)
+                if _AIR_LABEL_RE.search(row_text):
+                    mode = "air"
+                    break
+                if _ROAD_LABEL_RE.search(row_text):
+                    mode = "road"
+                    break
+            if mode == "air":
+                print(f"[OICR] City-rate-card: skipping AIR section at header row {hi}")
+            sections.append((start, end, dc, rc, sc, mode))
 
-            # Map destination city -> zone(s)
-            dest_zones = self._cell_to_zones(dest_cell)
+        for (start, end, d_col, r_col, s_col, section_mode) in sections:
+            if section_mode == "air":
+                continue   # ignore entire air section
 
-            # Fallback: if cell contains a state name, try state->zone
-            if not dest_zones and state_col is not None and state_col < len(cells):
-                state_cell = cells[state_col].strip().upper()
-                dest_zones = self._cell_to_zones(state_cell)
+            in_air_block = False   # inline "By Air" sub-block tracker
+            for row in table_rows[start:end]:
+                cells = [str(c).strip() for c in row]
+                row_text = " ".join(cells)
 
-            if not dest_zones:
-                skipped += 1
-                continue
-
-            # Parse rate
-            try:
-                rate_str = cells[rate_col].replace(",", "").strip()
-                # Strip unit noise like "Rs.", "Rs ", "/kg" etc.
-                rate_str = re.sub(r'(?i)(?:rs\.?\s*|per\s*kg|/\s*kg)', '', rate_str).strip()
-                rate = float(rate_str)
-                if rate <= 0 or rate > 500:
+                # Detect inline mode-switch labels within the section
+                if _AIR_LABEL_RE.search(row_text):
+                    in_air_block = True
                     continue
-            except (ValueError, TypeError):
-                continue
+                if _ROAD_LABEL_RE.search(row_text):
+                    in_air_block = False
+                    continue
+                if in_air_block:
+                    continue   # skip rows inside an inline air sub-block
 
-            for dz in dest_zones:
-                zone_rate_samples[dz].append(rate)
+                if d_col >= len(cells) or r_col >= len(cells):
+                    continue
+
+                dest_cell = cells[d_col].strip().upper()
+                if not dest_cell or dest_cell in ("DESTINATION", "DEST", "CITY"):
+                    continue
+
+                # Map destination city -> zone(s)
+                dest_zones = self._cell_to_zones(dest_cell)
+
+                # Fallback: state column
+                if not dest_zones and s_col is not None and s_col < len(cells):
+                    state_cell = cells[s_col].strip().upper()
+                    dest_zones = self._cell_to_zones(state_cell)
+
+                if not dest_zones:
+                    skipped += 1
+                    continue
+
+                # Parse rate
+                try:
+                    rate_str = cells[r_col].replace(",", "").strip()
+                    rate_str = re.sub(r'(?i)(?:rs\.?\s*|per\s*kg|/\s*kg)', '', rate_str).strip()
+                    rate = float(rate_str)
+                    if rate <= 0 or rate > 500:
+                        continue
+                except (ValueError, TypeError):
+                    continue
+
+                for dz in dest_zones:
+                    zone_rate_samples[dz].append(rate)
 
         if not zone_rate_samples:
             return None
@@ -1191,12 +1221,10 @@ class OICREngine:
                   f"{min(normal_rates):.1f} > 60 Rs/kg — likely AIR rates")
             return None
 
-        # ── Extrapolate full 19×19 matrix from this single origin ─────────────
-        full_matrix = self._extrapolate_zone_matrix(origin_zone, origin_rates)
-        print(f"[OICR] City-rate-card: full matrix extrapolated from {origin_zone} "
-              f"-> {len(full_matrix)} origins")
-
-        return full_matrix
+        # Return ONLY the vendor's actual rates — no extrapolation to other origins.
+        # A city-rate-card is single-origin (the vendor only ships from one hub).
+        # Only the origin zone row is filled; all other origins stay empty.
+        return {origin_zone: origin_rates}
 
     # ─── 3. Charge extraction ──────────────────────────────────────────────────
 
@@ -1596,6 +1624,10 @@ class OICREngine:
             result["company_details"].update(company_info)
 
         # Zone matrix + structured table charges — higher priority (table data is more reliable)
+        # city-rate-card accumulator: merge rates from multiple tables for the same origin
+        _crc_origin: Optional[str] = None
+        _crc_rates:  Dict[str, float] = {}
+
         all_table_rows: List[List[str]] = []
         for table in (tables or []):
             if not table:
@@ -1606,7 +1638,7 @@ class OICREngine:
                     flat_rows.append([str(c) for c in row])
             all_table_rows.extend(flat_rows)
 
-            # Try city-based zone matrix (from/to grid)
+            # Try city-based zone matrix (from/to grid) — takes priority
             if not result["zone_matrix"]:
                 zm = self.detect_city_zone_matrix(flat_rows)
                 if zm:
@@ -1614,16 +1646,33 @@ class OICREngine:
                     print(f"[OICR] PDF zone matrix: {len(zm)} origins")
 
             # Try city-rate-card (single-origin, destination+rate rows)
+            # Always try ALL tables and merge results for the same origin.
+            # A multi-page rate card splits the North-India and Pan-India sections
+            # across different tables; we need to combine them into one origin row.
             if not result["zone_matrix"]:
                 zm = self.detect_city_rate_card(flat_rows, context_text=text)
                 if zm:
-                    result["zone_matrix"] = zm
-                    print(f"[OICR] City-rate-card zone matrix: {len(zm)} origins")
+                    origin = list(zm.keys())[0]
+                    rates  = zm[origin]
+                    if _crc_origin is None:
+                        _crc_origin = origin
+                    if origin == _crc_origin:
+                        for dest, rate in rates.items():
+                            if dest not in _crc_rates:
+                                _crc_rates[dest] = rate
+                            else:
+                                _crc_rates[dest] = round((_crc_rates[dest] + rate) / 2, 3)
 
             # Charge table extraction — setdefault: table charges don't overwrite each other
             table_charges = self.extract_charges_from_table(flat_rows)
             for k, v in table_charges.items():
                 result["charges"].setdefault(k, v)
+
+        # ── Commit merged city-rate-card results ──────────────────────────────
+        if not result["zone_matrix"] and _crc_origin and _crc_rates:
+            result["zone_matrix"] = {_crc_origin: _crc_rates}
+            print(f"[OICR] City-rate-card (merged): {_crc_origin} -> "
+                  f"{len(_crc_rates)} dest zones: {dict(sorted(_crc_rates.items()))}")
 
         # Charges from free text — LOWER priority, only fill fields not found in tables
         # Uses setdefault so table-extracted values are never overwritten
@@ -1644,13 +1693,6 @@ class OICREngine:
                 result["charges"]["divisor"] = float(divisor_sfc)
                 result["charges"]["kFactor"] = float(divisor_sfc)
                 print(f"[OICR] 1CFT={kg_cft}kg -> divisor={divisor_sfc} cm3/kg (SFC surface)")
-
-        # ── Partial zone matrix completion ────────────────────────────────────
-        # If we found some origins but not all 19, fill the gaps now.
-        zm = result["zone_matrix"]
-        if 0 < len(zm) < len(ALL_ZONES):
-            zm = self.fill_partial_zone_matrix(zm)
-            result["zone_matrix"] = zm
 
         # ── Rate mode classification ───────────────────────────────────────────
         if result["zone_matrix"]:

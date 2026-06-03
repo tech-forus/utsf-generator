@@ -1,0 +1,47 @@
+[UTSF] Log file: C:\Users\tech\Downloads\01-06-2026\utsf-generator\logs\utsf_2026-06-03_10-24.log
+ * Serving Flask app 'web.app'
+ * Debug mode: off
+2026-06-03 10:24:27 INFO     [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-06-03 10:24:27 INFO     [33mPress CTRL+C to quit[0m
+2026-06-03 10:24:29 INFO     127.0.0.1 - - [03/Jun/2026 10:24:29] "GET / HTTP/1.1" 200 -
+[Ollama] Error: [WinError 10054] An existing connection was forcibly closed by the remote host
+2026-06-03 10:24:33 INFO     127.0.0.1 - - [03/Jun/2026 10:24:33] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 10:25:05 INFO     127.0.0.1 - - [03/Jun/2026 10:25:05] "DELETE /transporter/test_1780462149 HTTP/1.1" 200 -
+2026-06-03 10:25:06 INFO     127.0.0.1 - - [03/Jun/2026 10:25:06] "GET / HTTP/1.1" 200 -
+2026-06-03 10:25:06 INFO     127.0.0.1 - - [03/Jun/2026 10:25:06] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 10:25:08 INFO     127.0.0.1 - - [03/Jun/2026 10:25:08] "DELETE /transporter/test_1780462129 HTTP/1.1" 200 -
+2026-06-03 10:25:09 INFO     127.0.0.1 - - [03/Jun/2026 10:25:09] "GET / HTTP/1.1" 200 -
+2026-06-03 10:25:09 INFO     127.0.0.1 - - [03/Jun/2026 10:25:09] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 10:25:13 INFO     127.0.0.1 - - [03/Jun/2026 10:25:13] "DELETE /transporter/tcii HTTP/1.1" 200 -
+2026-06-03 10:25:13 INFO     127.0.0.1 - - [03/Jun/2026 10:25:13] "GET / HTTP/1.1" 200 -
+2026-06-03 10:25:13 INFO     127.0.0.1 - - [03/Jun/2026 10:25:13] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 10:25:15 INFO     127.0.0.1 - - [03/Jun/2026 10:25:15] "DELETE /transporter/tci_1780462245 HTTP/1.1" 200 -
+2026-06-03 10:25:16 INFO     127.0.0.1 - - [03/Jun/2026 10:25:16] "GET / HTTP/1.1" 200 -
+2026-06-03 10:25:16 INFO     127.0.0.1 - - [03/Jun/2026 10:25:16] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 10:25:18 INFO     127.0.0.1 - - [03/Jun/2026 10:25:18] "DELETE /transporter/new_transporter_pto5 HTTP/1.1" 200 -
+2026-06-03 10:25:19 INFO     127.0.0.1 - - [03/Jun/2026 10:25:19] "GET / HTTP/1.1" 200 -
+2026-06-03 10:25:19 INFO     127.0.0.1 - - [03/Jun/2026 10:25:19] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 10:25:21 INFO     127.0.0.1 - - [03/Jun/2026 10:25:21] "DELETE /transporter/new_transporter_ce49 HTTP/1.1" 200 -
+2026-06-03 10:25:21 INFO     127.0.0.1 - - [03/Jun/2026 10:25:21] "GET / HTTP/1.1" 200 -
+2026-06-03 10:25:21 INFO     127.0.0.1 - - [03/Jun/2026 10:25:21] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 10:25:22 INFO     127.0.0.1 - - [03/Jun/2026 10:25:22] "DELETE /transporter/fewfe_v1 HTTP/1.1" 200 -
+2026-06-03 10:25:23 INFO     127.0.0.1 - - [03/Jun/2026 10:25:23] "GET / HTTP/1.1" 200 -
+2026-06-03 10:25:23 INFO     127.0.0.1 - - [03/Jun/2026 10:25:23] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 10:25:25 INFO     127.0.0.1 - - [03/Jun/2026 10:25:25] "DELETE /transporter/new_transporter_neqe HTTP/1.1" 200 -
+2026-06-03 10:25:25 INFO     127.0.0.1 - - [03/Jun/2026 10:25:25] "GET / HTTP/1.1" 200 -
+2026-06-03 10:25:25 INFO     127.0.0.1 - - [03/Jun/2026 10:25:25] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 10:25:27 INFO     127.0.0.1 - - [03/Jun/2026 10:25:27] "DELETE /transporter/fewfe_final HTTP/1.1" 200 -
+2026-06-03 10:25:27 INFO     127.0.0.1 - - [03/Jun/2026 10:25:27] "GET / HTTP/1.1" 200 -
+2026-06-03 10:25:27 INFO     127.0.0.1 - - [03/Jun/2026 10:25:27] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 10:25:30 INFO     127.0.0.1 - - [03/Jun/2026 10:25:30] "DELETE /transporter/fewfe_debug2 HTTP/1.1" 200 -
+2026-06-03 10:25:30 INFO     127.0.0.1 - - [03/Jun/2026 10:25:30] "GET / HTTP/1.1" 200 -
+2026-06-03 10:25:30 INFO     127.0.0.1 - - [03/Jun/2026 10:25:30] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 10:25:31 INFO     127.0.0.1 - - [03/Jun/2026 10:25:31] "DELETE /transporter/fewfe_debug HTTP/1.1" 200 -
+2026-06-03 10:25:32 INFO     127.0.0.1 - - [03/Jun/2026 10:25:32] "GET / HTTP/1.1" 200 -
+2026-06-03 10:25:33 INFO     127.0.0.1 - - [03/Jun/2026 10:25:33] "DELETE /transporter/direct_test_1780462518 HTTP/1.1" 200 -
+2026-06-03 10:25:33 INFO     127.0.0.1 - - [03/Jun/2026 10:25:33] "GET / HTTP/1.1" 200 -
+[Ollama] Error: [WinError 10054] An existing connection was forcibly closed by the remote host
+2026-06-03 10:25:34 INFO     127.0.0.1 - - [03/Jun/2026 10:25:34] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-03 10:25:36 INFO     127.0.0.1 - - [03/Jun/2026 10:25:36] "GET /api/status HTTP/1.1" 200 -

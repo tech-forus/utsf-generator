@@ -1,0 +1,13 @@
+[UTSF] Log file: C:\Users\tech\Downloads\01-06-2026\utsf-generator\logs\utsf_2026-06-03_12-11.log
+ * Serving Flask app 'web.app'
+ * Debug mode: off
+2026-06-03 12:11:44 INFO     [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-06-03 12:11:44 INFO     [33mPress CTRL+C to quit[0m
+2026-06-03 12:11:45 INFO     127.0.0.1 - - [03/Jun/2026 12:11:45] "GET / HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-03 12:11:48 INFO     127.0.0.1 - - [03/Jun/2026 12:11:48] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 12:13:07 INFO     127.0.0.1 - - [03/Jun/2026 12:13:07] "DELETE /transporter/fsf HTTP/1.1" 200 -
+2026-06-03 12:13:07 INFO     127.0.0.1 - - [03/Jun/2026 12:13:07] "GET / HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-03 12:13:09 INFO     127.0.0.1 - - [03/Jun/2026 12:13:09] "GET /api/status HTTP/1.1" 200 -

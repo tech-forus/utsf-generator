@@ -1384,7 +1384,7 @@ class ExcelParser(BaseParser):
             "origin pincode", "src pincode", "dest pincode", "to pincode",
             "from pincode", "delivery pincode", "service pincode",
         }
-        _PIN_HEADER_SUBSTR = ("pincode", "postal code", "zip code", "pin code", "pin no")
+        _PIN_HEADER_SUBSTR = ("pincode", "postal code", "zip code", "pin code", "pin no", "dest pin", "destination pin", "loc code")
 
         for ri in range(scan_limit):
             row = rows[ri]
@@ -1456,17 +1456,17 @@ class ExcelParser(BaseParser):
 
         # Auto-detect by value scan if no named header found — try columns 0..7
         if header_row_idx is None:
-            max_col = max((len(r) for r in rows[:50] if r), default=0)
+            max_col = max((len(r) for r in rows[:150] if r), default=0)
             for candidate_col in range(min(8, max_col)):
                 valid_count = sum(
-                    1 for row in rows[:50]
+                    1 for row in rows[:150]
                     if len(row) > candidate_col and _is_valid_pincode(row[candidate_col])
                 )
-                if valid_count >= 10:
+                if valid_count >= 3:
                     pin_col = candidate_col
                     header_row_idx = -1
                     print(f"[Excel:{sheet_name}] Auto-detected pincode column {candidate_col} "
-                          f"({valid_count}/50 valid in first 50 rows)")
+                          f"({valid_count}/150 valid in first 150 rows)")
                     break
 
             if header_row_idx is None:
@@ -1584,7 +1584,7 @@ class ExcelParser(BaseParser):
             if len(zone_pincodes) > 5:
                 print(f"[Excel:{sheet_name}]   ... and {len(zone_pincodes)-5} more")
 
-        if len(served) < 10:
+        if len(served) < 3:
             print(f"[Excel:{sheet_name}] Too few pincodes ({len(served)}) — discarding")
             return None
 
@@ -2261,17 +2261,22 @@ class ExcelParser(BaseParser):
         if header_row_idx is None:
             return None
 
-        # Step 2: Find pincode column — expect it in col 0 or col before first zone col
+        # Step 2: Find pincode column — search columns 0 up to first_zone_col
         first_zone_col = min(col_origin_zones.keys())
-        pin_col = first_zone_col - 1  # usually 0
+        pin_col = None
+        
+        # Verify: at least 3 valid pincodes in the candidate pin_col among next 50 rows
+        verify_rows = rows[header_row_idx + 1: header_row_idx + 51]
+        for candidate_col in range(first_zone_col):
+            valid_pin_count = sum(
+                1 for r in verify_rows
+                if len(r) > candidate_col and _is_valid_pincode(r[candidate_col])
+            )
+            if valid_pin_count >= 3:
+                pin_col = candidate_col
+                break
 
-        # Verify: at least 5 valid pincodes in the expected pin_col among next 20 rows
-        verify_rows = rows[header_row_idx + 1: header_row_idx + 25]
-        valid_pin_count = sum(
-            1 for r in verify_rows
-            if len(r) > pin_col and _is_valid_pincode(r[pin_col])
-        )
-        if valid_pin_count < 5:
+        if pin_col is None:
             return None  # Not a pincode-keyed sheet
 
         print(f"[Excel:{sheet_name}] Pincode-rate matrix detected: "

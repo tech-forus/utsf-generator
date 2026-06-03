@@ -199,10 +199,18 @@ def merge_extracted_data(pieces: List[Dict]) -> Dict:
             return sum(len(v) for v in m.values()) if isinstance(m, dict) else 0
 
         zm = piece.get("zone_matrix") or piece.get("zoneMatrix") or {}
-        if _zm_size(zm) > _zm_size(merged["zone_matrix"]):
+        _zm_new  = _zm_size(zm)
+        _zm_curr = _zm_size(merged["zone_matrix"])
+        if _zm_new > 0 or zm:
+            print(f"[Merge] zone_matrix candidate: origins={sorted(zm.keys())[:8]} "
+                  f"pairs={_zm_new}  vs current pairs={_zm_curr}")
+        if _zm_new > _zm_curr:
             merged["zone_matrix"] = zm
-            print(f"[Merge] zone_matrix updated: {sorted(zm.keys())} "
-                  f"({_zm_size(zm)} rate pairs)")
+            print(f"[Merge] zone_matrix ACCEPTED: {sorted(zm.keys())} "
+                  f"({_zm_new} rate pairs > previous {_zm_curr})")
+        elif _zm_curr > 0 and _zm_new > 0:
+            print(f"[Merge] zone_matrix REJECTED: kept existing "
+                  f"({_zm_curr} pairs >= {_zm_new} pairs)")
 
         # Serviceability block (FC4/v2 format — larger dict wins)
         svc = piece.get("serviceability") or piece.get("service") or {}
@@ -238,9 +246,12 @@ def _log_data_summary(label: str, data: Dict, folder: str):
     """Print a summary of what keys/counts were extracted from one file."""
     keys_found = []
 
-    if data.get("zone_matrix"):
-        n_zones = len(data["zone_matrix"])
-        keys_found.append(f"zone_matrix({n_zones} origins)")
+    zm = data.get("zone_matrix") or {}
+    if zm:
+        n_zones = len(zm)
+        n_pairs = sum(len(v) for v in zm.values()) if isinstance(zm, dict) else 0
+        keys_found.append(f"zone_matrix({n_zones} origins × {n_pairs} rate-pairs, "
+                          f"origins={sorted(zm.keys())[:8]})")
 
     sp = data.get("served_pincodes", [])
     if sp:
@@ -284,7 +295,8 @@ def _log_merged_summary(merged: Dict):
 
     zm = merged.get("zone_matrix", {})
     if zm:
-        print(f"    zone_matrix     : {len(zm)} origin zones -> "
+        n_pairs = sum(len(v) for v in zm.values()) if isinstance(zm, dict) else 0
+        print(f"    zone_matrix     : {len(zm)} origin zones, {n_pairs} rate pairs -> "
               f"{sorted(zm.keys())[:8]}")
     else:
         print(f"    zone_matrix     : (empty)")
@@ -453,7 +465,8 @@ def generate_utsf_for_transporter(
         ext    = os.path.splitext(file_path)[1].lower()
         subfolder = os.path.basename(os.path.dirname(file_path))
 
-        print(f"\n  --- Parsing file {file_idx}/{len(files)}: {rel} ---")
+        print(f"\n  --- Parsing file {file_idx}/{len(files)}: {rel} "
+              f"[subfolder={subfolder}] ---")
 
         if ext == ".json":
             try:

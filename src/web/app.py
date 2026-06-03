@@ -523,7 +523,11 @@ def upload_files(name: str):
     saved = []    # [{name, subfolder, original_name}]
     skipped = []  # [filename]
 
-    for f in request.files.getlist("files"):
+    # Accept both "files" (plural, UTSF web UI) and "file" (singular,
+    # backend proxy from AddVendor fast-track and extract-prices paths).
+    all_uploads = request.files.getlist("files") + request.files.getlist("file")
+
+    for f in all_uploads:
         if not f.filename:
             continue
         if not allowed_file(f.filename):
@@ -539,6 +543,7 @@ def upload_files(name: str):
         dest_dir = os.path.join(TRANSPORTERS, name, subfolder)
         os.makedirs(dest_dir, exist_ok=True)
         f.save(os.path.join(dest_dir, filename))
+        print(f"[Upload] {filename} -> {subfolder}/ (override={override_subfolder!r})")
         saved.append({"name": filename, "subfolder": subfolder})
 
     return jsonify({"ok": True, "saved": saved, "skipped": skipped})

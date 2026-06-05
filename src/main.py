@@ -738,7 +738,7 @@ def generate_utsf_for_transporter(
 
     quality = utsf.get("dataQuality", 0)
     stats   = utsf.get("stats", {})
-    total_pins  = stats.get("totalServedPincodes", 0)
+    total_pins  = stats.get("totalPincodes", 0)
     zones_cnt   = stats.get("zonesServed", 0)
     oda_cnt     = stats.get("totalOdaPincodes", 0)
     active_z    = stats.get("activeZones", [])

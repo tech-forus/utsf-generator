@@ -18,7 +18,7 @@ def full_validate(utsf: Dict) -> Tuple[bool, List[str], List[str]]:
 
     _check_pricing_sanity(utsf, errors, warnings)
     _check_serviceability_consistency(utsf, errors, warnings)
-    _check_zone_matrix_completeness(utsf, warnings)
+    _check_zone_matrix_completeness(utsf, errors, warnings)
     _check_company_completeness(utsf, warnings)
 
     is_valid = len(errors) == 0
@@ -90,23 +90,39 @@ def _check_serviceability_consistency(utsf: Dict, errors: List, warnings: List):
                 )
 
 
-def _check_zone_matrix_completeness(utsf: Dict, warnings: List):
+def _check_zone_matrix_completeness(utsf: Dict, errors: List, warnings: List):
     pricing = utsf.get("pricing", {})
     zm = pricing.get("zoneRates", {})
     svc = utsf.get("serviceability", {})
 
     active_zones = [z for z, d in svc.items() if d.get("mode") != "NOT_SERVED"]
 
-    # All active origin zones should have rates
-    for zone in active_zones:
-        if zone not in zm:
-            warnings.append(f"Zone {zone} is served but has no origin rates in zoneRates")
+    # Split zones into those with origin rates and those without
+    zones_no_rates = [z for z in active_zones if z not in zm]
+    zones_with_rates = [z for z in active_zones if z in zm]
+
+    if zones_no_rates:
+        missing_pct = len(zones_no_rates) / len(active_zones) if active_zones else 0
+        if missing_pct > 0.20:
+            # More than 20% of served zones have no rates — this is a parsing failure,
+            # not a minor data gap. Promote to error so the UTSF is rejected.
+            errors.append(
+                f"Hub-zone mapping failure: {len(zones_no_rates)}/{len(active_zones)} active zones "
+                f"have no origin rates: {sorted(zones_no_rates)}. "
+                f"Verify the Hub City Key sheet was parsed correctly and all hub codes "
+                f"map to recognised zone codes."
+            )
         else:
-            for dest_zone in active_zones:
-                if dest_zone not in zm.get(zone, {}):
-                    warnings.append(
-                        f"zoneRates missing [{zone}][{dest_zone}] — both zones are active"
-                    )
+            for zone in zones_no_rates:
+                warnings.append(f"Zone {zone} is served but has no origin rates in zoneRates")
+
+    # Check for missing cross-zone pairs only among zones that do have origin rates
+    for zone in zones_with_rates:
+        for dest_zone in active_zones:
+            if dest_zone not in zm.get(zone, {}):
+                warnings.append(
+                    f"zoneRates missing [{zone}][{dest_zone}] — both zones are active"
+                )
 
 
 def _check_company_completeness(utsf: Dict, warnings: List):
@@ -134,7 +150,7 @@ def print_validation_report(utsf: Dict):
     print(f"Status: {ok + ' VALID' if valid else bad + ' INVALID'}")
     print(f"Data Quality: {utsf.get('dataQuality', 0):.1f}/100")
     stats = utsf.get("stats", {})
-    print(f"Coverage: {stats.get('totalServedPincodes', 0):,} pincodes, "
+    print(f"Coverage: {stats.get('totalPincodes', 0):,} pincodes, "
           f"{stats.get('zonesServed', 0)} zones")
 
     if errors:

@@ -47,7 +47,13 @@ def find_free_port(preferred: int = 5000) -> int:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    port = find_free_port(5000)
+    # Support --port <n> so the backend's UTSF_LOCAL_PORT env var can be matched
+    _port_arg = None
+    for i, a in enumerate(sys.argv[:-1]):
+        if a == '--port':
+            try: _port_arg = int(sys.argv[i + 1])
+            except ValueError: pass
+    port = _port_arg if _port_arg else find_free_port(5000)
     url  = f"http://127.0.0.1:{port}"
 
     # ── 3. Fresh Start Management ─────────────────────────────────────────────

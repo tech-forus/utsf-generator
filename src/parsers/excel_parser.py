@@ -88,7 +88,7 @@ _CANONICAL = [
     "N1","N2","N3","N4",
     "S1","S2","S3","S4",
     "E1","E2",
-    "W1","W2",
+    "W1","W2","W3",
     "C1","C2",
     "NE1","NE2",
     "X1","X2","X3",
@@ -785,6 +785,15 @@ def _parse_vf_from_row(row: List, start_col: int = 1) -> Dict:
     # Full cell text (joined) for regex on "X% or Rs Y" style
     full_text = " ".join(cells)
 
+    # Pattern: "Rs. X/Kg or Rs. Y/consignment (higher)" — ODA per-kg with minimum
+    m_kg = re.search(
+        r'(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*/\s*kg[s]?.*?'
+        r'(?:rs\.?\s*)(\d[\d,]*(?:\.\d+)?)\s*/?\s*(?:consignment|con(?:sign)?|shipment)',
+        full_text, re.IGNORECASE
+    )
+    if m_kg:
+        return {"v": float(m_kg.group(1)), "f": float(m_kg.group(2).replace(',', ''))}
+
     # Pattern: "X% or Rs Y" or "X% / Rs Y"
     m = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:or|/|,)?\s*(?:rs|inr|₹)?\s*(\d+(?:\.\d+)?)',
                   full_text, re.IGNORECASE)
@@ -970,6 +979,11 @@ class ExcelParser(BaseParser):
 
         sorted_sheets = sorted(sheets.items(), key=_sheet_priority)
 
+        # Extract hub→zone key from any "Hub City Key" type sheet before processing.
+        # This gives _try_parse_zone_matrix an authoritative lookup so it doesn't
+        # have to fall back to fuzzy string matching on hub codes like DEL/GAU/IMP.
+        hub_zone_key = self._extract_hub_zone_key(dict(sheets.items()))
+
         for sheet_name, rows in sorted_sheets:
             if not rows:
                 print(f"[Excel:{sheet_name}] Empty sheet — skipping")
@@ -1001,8 +1015,18 @@ class ExcelParser(BaseParser):
                 except Exception as _oicr_err:
                     print(f"[Excel:{sheet_name}] OICR check failed: {_oicr_err}")
 
-            # 1a. Pincode-grounded zone matrix (highest accuracy — try first)
-            # This uses pincodes.json to resolve dest zones rather than trusting
+            # 1a. Long-format zone matrix — each row = one from-zone/to-zone/rate triple.
+            # Must be tried BEFORE pincode-grounded and wide-format parsers: the
+            # wide-format header detector misidentifies data rows as header rows when
+            # zone codes appear in every row (which is exactly the long-format layout).
+            if not detected.get("zone_matrix"):
+                zm_lf = self._try_parse_long_format_zone_matrix(rows, sheet_name)
+                if zm_lf:
+                    detected["zone_matrix"] = zm_lf
+                    classified_as.append(f"LONG-FORMAT ZONE MATRIX ({len(zm_lf)} origins)")
+
+            # 1b. Pincode-grounded zone matrix (highest accuracy for wide-format)
+            # Uses pincodes.json to resolve dest zones rather than trusting
             # column labels, eliminating the row/column transposition error.
             if not detected.get("zone_matrix"):
                 zm_pg = self._try_parse_pincode_rate_matrix(rows, sheet_name)
@@ -1010,9 +1034,9 @@ class ExcelParser(BaseParser):
                     detected["zone_matrix"] = zm_pg
                     classified_as.append(f"PINCODE-GROUNDED ZONE MATRIX ({len(zm_pg)} origins)")
 
-            # 1b. Standard zone-label matrix (fallback when rows have zone labels)
+            # 1c. Standard zone-label matrix (fallback — wide format with zone labels)
             if not detected.get("zone_matrix"):
-                zm = self._try_parse_zone_matrix(rows, sheet_name)
+                zm = self._try_parse_zone_matrix(rows, sheet_name, hub_zone_key=hub_zone_key)
                 if zm:
                     detected["zone_matrix"] = zm
                     classified_as.append("ZONE MATRIX")
@@ -1169,11 +1193,176 @@ class ExcelParser(BaseParser):
         return detected
 
     # ------------------------------------------------------------------
+    # Long-format zone matrix parser  (from_zone / to_zone / rate per row)
+    # ------------------------------------------------------------------
+
+    # Column name patterns for long-format detection
+    _LF_FROM_PATTERNS  = {"from_zone","from zone","origin_zone","origin zone","frm_zone",
+                          "source_zone","source zone","from","origin","frm","src_zone","src zone"}
+    _LF_TO_PATTERNS    = {"to_zone","to zone","dest_zone","destination_zone","dest zone",
+                          "destination zone","to","dest","destination","to_hub","dest_hub"}
+    _LF_RATE_PATTERNS  = {"rate_per_kg_rs","rate_per_kg","rate per kg","rate/kg","rs_per_kg",
+                          "rate","freight","freight_rate","freight rate","price","amount","rs"}
+
+    def _try_parse_long_format_zone_matrix(
+        self, rows: List[List], sheet_name: str
+    ) -> Optional[Dict]:
+        """
+        Detect and parse a long-format zone rate table where each row encodes
+        a single from-zone → to-zone rate pair, e.g.:
+
+            from_zone | from_hub_city | to_zone | to_hub_city | rate_per_kg_rs | transit_days | zone_type
+            N1        | DEL           | N1      | DEL         | 3.5            | 1            | same
+            N1        | DEL           | N2      | CHD         | 5.0            | 1            | cross
+            ...
+
+        Detection: scans rows 0-20 (skipping metadata comment rows starting with '#')
+        for a header row that contains at least one from-zone column keyword AND one
+        to-zone column keyword AND one rate column keyword.
+
+        Called BEFORE wide-format _try_parse_zone_matrix so that the wide-format
+        header-detection algorithm never sees these files.
+        """
+        if len(rows) < 4:
+            return None
+
+        scan_limit = min(20, len(rows))
+        header_row_idx = None
+        from_col = to_col = rate_col = None
+
+        for ri in range(scan_limit):
+            row = rows[ri]
+            cells = [_upper(c).strip() for c in row]
+            # Skip metadata lines (e.g. "# Company", "# GST No.")
+            if cells and cells[0].startswith("#"):
+                continue
+            found_from = found_to = found_rate = None
+            for ci, h in enumerate(cells):
+                h_norm = h.lower().replace("-", "_").replace(" ", "_")
+                h_bare = h.lower().replace("-", " ").replace("_", " ").strip()
+                if found_from is None and (h_bare in self._LF_FROM_PATTERNS or h_norm in self._LF_FROM_PATTERNS):
+                    found_from = ci
+                if found_to is None and (h_bare in self._LF_TO_PATTERNS or h_norm in self._LF_TO_PATTERNS):
+                    found_to = ci
+                if found_rate is None and (h_bare in self._LF_RATE_PATTERNS or h_norm in self._LF_RATE_PATTERNS):
+                    found_rate = ci
+            if found_from is not None and found_to is not None and found_rate is not None:
+                # Disambiguate: if from_col == to_col (e.g. "from"/"to" both matched
+                # the same cell via a broad keyword), bail — not a real long-format table.
+                if found_from == found_to:
+                    continue
+                header_row_idx = ri
+                from_col, to_col, rate_col = found_from, found_to, found_rate
+                print(f"[Excel:{sheet_name}] Long-format zone matrix header at row {ri}: "
+                      f"from_col={from_col} ('{_upper(rows[ri][from_col])}'), "
+                      f"to_col={to_col} ('{_upper(rows[ri][to_col])}'), "
+                      f"rate_col={rate_col} ('{_upper(rows[ri][rate_col])}')")
+                break
+
+        if header_row_idx is None:
+            return None
+
+        matrix: Dict[str, Dict[str, float]] = {}
+        skipped = 0
+        for row in rows[header_row_idx + 1:]:
+            if not row:
+                continue
+            raw_from = _upper(row[from_col]).strip() if len(row) > from_col else ""
+            raw_to   = _upper(row[to_col]).strip()   if len(row) > to_col   else ""
+            rate     = _safe_float(row[rate_col])     if len(row) > rate_col else None
+            if not raw_from or not raw_to or rate is None or rate <= 0:
+                skipped += 1
+                continue
+            # Expand aliases (e.g. NORTH → [N1,N2,N3,N4]; W3 → [W3])
+            from_zones = _expand_zone_token(raw_from) or ZONE_EXPANSION.get(raw_from, [raw_from])
+            to_zones   = _expand_zone_token(raw_to)   or ZONE_EXPANSION.get(raw_to,   [raw_to])
+            for fz in from_zones:
+                for tz in to_zones:
+                    matrix.setdefault(fz, {})[tz] = rate
+
+        if len(matrix) < 3:
+            return None
+
+        total_pairs = sum(len(v) for v in matrix.values())
+        print(f"[Excel:{sheet_name}] Long-format zone matrix: "
+              f"{len(matrix)} origin zones, {total_pairs} rate pairs "
+              f"({skipped} rows skipped)")
+        for orig in list(matrix.keys())[:4]:
+            print(f"[Excel:{sheet_name}]   {orig}: {len(matrix[orig])} dest rates "
+                  f"(sample: {dict(list(matrix[orig].items())[:4])})")
+        return matrix
+
+    # ------------------------------------------------------------------
+    # Hub City Key extractor
+    # ------------------------------------------------------------------
+
+    def _extract_hub_zone_key(self, sheets: Dict[str, List[List]]) -> Dict[str, str]:
+        """
+        Scan all sheets for a hub-code → zone-code mapping table (e.g. "Hub City Key").
+
+        Expected layout (header + data rows):
+            Hub Code | Zone | City (Full) | Regions
+            DEL      | N1   | Delhi       | ...
+            GAU      | NE1  | Guwahati    | ...
+            IMP      | NE2  | Imphal      | ...
+
+        Returns {HUB_CODE: ZONE_CODE} e.g. {'DEL': 'N1', 'GAU': 'NE1', 'IMP': 'NE2'}
+        Empty dict if no hub key sheet is found.
+        """
+        _CANONICAL_SET = set(_CANONICAL)
+        HUB_SHEET_KEYWORDS = ('hub city key', 'hub zone map', 'hub zone key',
+                               'zone key', 'hub key', 'hub map')
+
+        for sheet_name, rows in sheets.items():
+            name_lower = sheet_name.lower().strip()
+            if not any(kw in name_lower for kw in HUB_SHEET_KEYWORDS):
+                continue
+            if not rows:
+                continue
+
+            # Find columns: look for a header row with 'hub'/'code' and 'zone'
+            hub_col = zone_col = None
+            data_start = 1  # default: skip row 0 as header
+            for ri, row in enumerate(rows[:5]):
+                row_lower = [_cell_str(c).lower().strip() for c in row]
+                for ci, h in enumerate(row_lower):
+                    if hub_col is None and ('hub' in h or ('code' in h and 'zone' not in h)):
+                        hub_col = ci
+                    if zone_col is None and h == 'zone':
+                        zone_col = ci
+                if hub_col is not None and zone_col is not None:
+                    data_start = ri + 1
+                    break
+
+            # Fallback: assume col 0 = hub code, col 1 = zone code
+            if hub_col is None:
+                hub_col = 0
+            if zone_col is None:
+                zone_col = 1
+
+            hub_to_zone: Dict[str, str] = {}
+            for row in rows[data_start:]:
+                if len(row) <= max(hub_col, zone_col):
+                    continue
+                hub_code = _cell_str(row[hub_col]).strip().upper()
+                zone_code = _cell_str(row[zone_col]).strip().upper()
+                if hub_code and zone_code in _CANONICAL_SET:
+                    hub_to_zone[hub_code] = zone_code
+
+            if len(hub_to_zone) >= 3:
+                sample = dict(list(hub_to_zone.items())[:5])
+                print(f"[ExcelParser] Hub zone key extracted from '{sheet_name}': "
+                      f"{len(hub_to_zone)} hub→zone mappings (sample: {sample})")
+                return hub_to_zone
+
+        return {}
+
+    # ------------------------------------------------------------------
     # Zone matrix parser
     # ------------------------------------------------------------------
 
     def _try_parse_zone_matrix(
-        self, rows: List[List], sheet_name: str
+        self, rows: List[List], sheet_name: str, hub_zone_key: Optional[Dict[str, str]] = None
     ) -> Optional[Dict]:
         """
         Detect and parse a zone price matrix.
@@ -1221,14 +1410,22 @@ class ExcelParser(BaseParser):
         header = [_upper(c) for c in rows[header_row_idx]]
         print(f"[Excel:{sheet_name}] Zone matrix header at row {header_row_idx}: {header[:16]}")
 
-        # Build column index: col_idx -> list of canonical zones
-        # Use SmartMatcher (with ZONE_EXPANSION as fallback) for maximum coverage
+        # Build column index: col_idx -> list of canonical zones.
+        # Priority: (1) hub_zone_key exact lookup, (2) ZONE_EXPANSION table, (3) SmartMatcher fuzzy.
+        # When hub_zone_key is available we skip fuzzy matching entirely to prevent wrong
+        # assignments like GAU→W2 or IMP→[C1,C2] that the fuzzy matcher produces for hub codes.
         sm = _get_sm()
         col_canonical: Dict[int, List[str]] = {}
         for ci, h in enumerate(header):
             h_stripped = h.strip()
             if not h_stripped:
                 continue
+
+            # Hub key exact lookup (highest priority — avoids all fuzzy errors)
+            if hub_zone_key and h_stripped in hub_zone_key:
+                col_canonical[ci] = [hub_zone_key[h_stripped]]
+                continue
+
             # Use _expand_zone_token which handles slash-separated headers like "N2/N3"
             expansion = _expand_zone_token(h_stripped)
             if not expansion:
@@ -1236,8 +1433,16 @@ class ExcelParser(BaseParser):
             if expansion:
                 col_canonical[ci] = expansion
             elif sm:
+                # Guard: bare integers/floats are transit days or serial numbers —
+                # never zone names. Skip fuzzy matching to prevent '3' → ['E1','E2'].
+                if re.match(r'^\d+(\.\d+)?$', h_stripped):
+                    continue
+                # When hub_zone_key is loaded, skip fuzzy fallback for unrecognised
+                # tokens — they are likely hub codes not in the key, not zone aliases.
+                if hub_zone_key:
+                    continue
                 # SmartMatcher handles fuzzy/geo matches
-                r = sm.match_zone(h_stripped, min_confidence=0.65)
+                r = sm.match_zone(h_stripped, min_confidence=0.70)
                 if r.value:
                     col_canonical[ci] = r.value
                     if r.method != "exact":
@@ -1274,7 +1479,11 @@ class ExcelParser(BaseParser):
         print(f"[Excel:{sheet_name}] origin_col={origin_col} "
               f"(zone hits in data rows: {_best_hits}/{len(_data_sample)})")
 
-        matrix: Dict[str, Dict[str, float]] = {}
+        # Accumulate all rate candidates before resolving conflicts.
+        # rate_acc[orig_zone][dest_zone] = [rate1, rate2, ...] so that when
+        # multiple source rows resolve to the same zone we can apply the
+        # max-if-close / mean-if-far rule instead of silently overwriting.
+        rate_acc: Dict[str, Dict[str, List[float]]] = {}
         data_rows_processed = 0
         data_rows_with_rates = 0
 
@@ -1293,17 +1502,24 @@ class ExcelParser(BaseParser):
             if not raw_origin:
                 continue
 
-            origin_zones = _expand_zone_token(raw_origin)
-            if not origin_zones:
-                origin_zones = ZONE_EXPANSION.get(raw_origin) or ZONE_EXPANSION.get(re.sub(r'[-_]', ' ', raw_origin))
-            if not origin_zones and sm:
-                r = sm.match_zone(raw_origin, min_confidence=0.65)
-                if r.value:
-                    origin_zones = r.value
-                    if r.method != "exact":
-                        print(f"[Excel:{sheet_name}]   Smart origin match: '{raw_origin}' "
-                              f"-> {r.value} ({r.method})")
-                        _record_audit("zone", raw_origin, r.value, r.method, r.confidence, sheet_name)
+            # Hub key exact lookup for origin (same priority as column headers)
+            if hub_zone_key and raw_origin in hub_zone_key:
+                origin_zones = [hub_zone_key[raw_origin]]
+            else:
+                origin_zones = _expand_zone_token(raw_origin)
+                if not origin_zones:
+                    origin_zones = ZONE_EXPANSION.get(raw_origin) or ZONE_EXPANSION.get(re.sub(r'[-_]', ' ', raw_origin))
+                if not origin_zones and sm:
+                    # Skip fuzzy when hub_zone_key is loaded — unrecognised tokens
+                    # are hub codes not in the key, not zone aliases.
+                    if not hub_zone_key:
+                        r = sm.match_zone(raw_origin, min_confidence=0.65)
+                        if r.value:
+                            origin_zones = r.value
+                            if r.method != "exact":
+                                print(f"[Excel:{sheet_name}]   Smart origin match: '{raw_origin}' "
+                                      f"-> {r.value} ({r.method})")
+                                _record_audit("zone", raw_origin, r.value, r.method, r.confidence, sheet_name)
             if not origin_zones:
                 continue
 
@@ -1311,8 +1527,8 @@ class ExcelParser(BaseParser):
             row_has_rate = False
 
             for orig_zone in origin_zones:
-                if orig_zone not in matrix:
-                    matrix[orig_zone] = {}
+                if orig_zone not in rate_acc:
+                    rate_acc[orig_zone] = {}
 
                 for ci, dest_zones in col_canonical.items():
                     if ci >= len(row):
@@ -1320,11 +1536,34 @@ class ExcelParser(BaseParser):
                     rate = _safe_float(row[ci])
                     if rate is not None and rate > 0:
                         for dest_zone in dest_zones:
-                            matrix[orig_zone][dest_zone] = rate
+                            rate_acc[orig_zone].setdefault(dest_zone, []).append(rate)
                         row_has_rate = True
 
             if row_has_rate:
                 data_rows_with_rates += 1
+
+        # Resolve rate conflicts: for each (orig, dest) with multiple candidate values,
+        # apply max when spread < 3 Rs (minor rounding/zone-overlap variance),
+        # or mean when spread >= 3 Rs (genuinely different hub prices in the same zone).
+        matrix: Dict[str, Dict[str, float]] = {}
+        _conflicts = 0
+        for orig_zone, dest_rates in rate_acc.items():
+            matrix[orig_zone] = {}
+            for dest_zone, rates in dest_rates.items():
+                if len(rates) == 1:
+                    matrix[orig_zone][dest_zone] = rates[0]
+                else:
+                    spread = max(rates) - min(rates)
+                    if spread < 3.0:
+                        resolved = max(rates)
+                    else:
+                        resolved = round(sum(rates) / len(rates), 2)
+                    matrix[orig_zone][dest_zone] = resolved
+                    _conflicts += 1
+
+        if _conflicts:
+            print(f"[Excel:{sheet_name}] Rate conflict resolution: {_conflicts} (origin,dest) "
+                  f"pairs had multiple values — max used where spread<3Rs, mean where ≥3Rs")
 
         print(f"[Excel:{sheet_name}] Zone matrix: "
               f"{data_rows_processed} origin rows, "
@@ -1527,8 +1766,12 @@ class ExcelParser(BaseParser):
                     explicit_oda_found = True
 
             if oda_flag_col is not None and oda_flag_col < len(row):
-                oda_raw = _cell_str(row[oda_flag_col]).strip().upper()
-                if oda_raw in ("Y", "YES", "TRUE", "1", "X"):
+                oda_raw = _cell_str(row[oda_flag_col]).strip()
+                oda_upper = oda_raw.upper()
+                oda_lower = oda_raw.lower()
+                if (oda_upper in ("Y", "YES", "TRUE", "1", "X") or
+                        oda_lower in ODA_POSITIVE or oda_raw in ODA_UNICODE or
+                        oda_lower.startswith("oda")):
                     is_oda = True
                     explicit_oda_found = True
 
@@ -1726,6 +1969,9 @@ class ExcelParser(BaseParser):
                 key_candidates.append((1, _cell_str(row[1]).lower().strip()))
 
             for key_col, key in key_candidates:
+                # Skip metadata/comment rows (e.g. "# Company", "# GST No.")
+                if key.startswith('#'):
+                    continue
                 val_start = key_col + 1
 
                 # Normalize key: collapse newlines and extra whitespace for matching
@@ -1965,19 +2211,29 @@ class ExcelParser(BaseParser):
         Columns can be at any position (handles wide/merged Excel layouts).
         Returns {"type": "distance_weight_matrix", "matrix": [...]} or None.
         """
-        # Step 1: Locate the ODA matrix header row
-        # Accept any row that has ODA + distance/rate/chart/table signal,
-        # not just "MATRIX" — TCI uses headers like "ODA Rate Chart", "ODA Distance Wise"
+        # Step 1: Locate the ODA matrix header row.
+        # Two strategies:
+        #   A. Row contains "ODA" + distance/chart/rate/km keyword
+        #   B. Row has a "Distance" column AND adjacent weight-band columns (Kg range headers)
+        #      — covers tables like "Distance | 0-100 Kg | 101-500 Kg | 501+ Kg"
+        #        that don't use the word "ODA" in their heading
         _ODA_MATRIX_RE = re.compile(
             r'(?i)\boda\b.{0,40}(?:matrix|chart|rate|table|distance|km|wise|band|slab)',
         )
         _ODA_DIST_RE = re.compile(
             r'(?i)(?:distance|dist|km|kms).{0,40}\boda\b',
         )
+        _WEIGHT_COL_RE = re.compile(r'\d+\s*[-–]\s*\d+\s*(?:kg|kgs?)\b|\d+\+\s*(?:kg|kgs?)\b', re.I)
         matrix_header_idx = None
         for ri, row in enumerate(rows):
             row_text = " ".join(_cell_str(c) for c in row)
             if _ODA_MATRIX_RE.search(row_text) or _ODA_DIST_RE.search(row_text):
+                matrix_header_idx = ri
+                break
+            # Strategy B: "Distance" column + at least 2 weight-band columns in same row
+            has_dist = bool(re.search(r'\bdistance\b|\bdist\b', row_text, re.I))
+            weight_hits = len(_WEIGHT_COL_RE.findall(row_text))
+            if has_dist and weight_hits >= 2:
                 matrix_header_idx = ri
                 break
 
@@ -1991,7 +2247,8 @@ class ExcelParser(BaseParser):
         weight_cols: List[Tuple[int, int, Optional[int]]] = []  # (col_idx, minKg, maxKg)
         col_header_idx = None
 
-        for ri in range(matrix_header_idx + 1, min(matrix_header_idx + 4, len(rows))):
+        # Include the header row itself in scan — Strategy B puts dist+weight cols in row 0
+        for ri in range(matrix_header_idx, min(matrix_header_idx + 4, len(rows))):
             row = rows[ri]
             found_weight = False
             temp_dist_col = None

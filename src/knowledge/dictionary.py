@@ -240,10 +240,10 @@ ZONE_SYNONYMS: Dict[str, List[str]] = {
 PINCODE_PREFIX_ZONES: Dict[str, List[str]] = {
     "1": ["N1","N2","N3","N4","X3"],              # Delhi / HP / J&K / Ladakh / Haryana
     "2": ["C2","N1","N2","N3","N4"],              # UP / Uttarakhand / some Central
-    "3": ["C2","N1","N3","W1","W2"],              # Rajasthan / Gujarat border
-    "4": ["C1","C2","E2","N3","S2","W1","W2"],   # Maharashtra / Gujarat / AP border / MP
+    "3": ["C2","N1","N2","N3","W1","W2","W3"],   # Rajasthan / Gujarat / some N2 vendors
+    "4": ["C1","C2","E2","N3","S2","W1","W2","W3"], # Maharashtra / Gujarat / AP / MP
     "5": ["C2","E2","S1","S2","S3","W2"],         # AP / Telangana / Karnataka / TN / Goa
-    "6": ["S1","S3","S4","X2"],                   # TN / Kerala / Lakshadweep
+    "6": ["S1","S2","S3","S4","X2"],              # TN / Kerala / Lakshadweep (S2 vendor-mapped)
     "7": ["E1","E2","NE1","NE2","X1"],            # Bengal / Odisha / Jharkhand / NE / Andaman
     "8": ["E1","E2","NE2"],                       # Bengal / Odisha / NE
     "9": ["E2"],                                  # Very limited (E Bengal border)

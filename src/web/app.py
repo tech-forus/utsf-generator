@@ -881,6 +881,29 @@ def output_review_data(name: str):
                 "expectedRange": expected_range,
             })
 
+        # Genuine merge ambiguities: two source files disagreed on a field with
+        # equal confidence (e.g. fuel% from PDF vs Excel). Surface these as a
+        # two-option choice — mark the matching review row "ambiguous" and
+        # attach exactly the two conflicting candidates so the user can pick.
+        ambiguities = utsf.get("_chargeAmbiguities", [])
+        ambiguous_fields = {a["field"]: a for a in ambiguities}
+        for row in charge_review:
+            amb = ambiguous_fields.pop(row["field"], None)
+            if amb:
+                row["status"] = "ambiguous"
+                row["candidates"] = amb["candidates"][:2]
+        # Ambiguous fields not covered by the standard review rows (e.g. odaCharges)
+        for field, amb in ambiguous_fields.items():
+            charge_review.append({
+                "field":         field,
+                "label":         field,
+                "value":         pr.get(field),
+                "status":        "ambiguous",
+                "confidence":    0.5,
+                "expectedRange": None,
+                "candidates":    amb["candidates"][:2],
+            })
+
         # Parse audit uncertain matches
         uncertain = [
             e for e in audit
@@ -928,6 +951,16 @@ def patch_utsf_field(name: str):
             obj = obj.setdefault(part, {})
         old_value = obj.get(parts[-1])
         obj[parts[-1]] = new_value
+
+        # If this field had a recorded merge ambiguity, the user's pick resolves
+        # it — drop the entry so the review screen stops asking about it.
+        if field_path.startswith("pricing.priceRate."):
+            charge_field = field_path.replace("pricing.priceRate.", "")
+            ambiguities = utsf.get("_chargeAmbiguities", [])
+            remaining = [a for a in ambiguities if a.get("field") != charge_field]
+            if len(remaining) != len(ambiguities):
+                utsf["_chargeAmbiguities"] = remaining
+                print(f"[HITL] Resolved ambiguity for {charge_field}: user chose {new_value!r}")
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(utsf, f, indent=2, ensure_ascii=False)
@@ -1294,6 +1327,9 @@ def api_extract_prices():
     import time as _time
     _t0 = _time.time()
 
+    from utsf_logger import utsf_logger
+    utsf_logger.init_logs()
+
     f = request.files.get("file")
     if not f or not f.filename:
         print("[UTSF:extract-prices] ERROR: No file in request")
@@ -1467,12 +1503,18 @@ def api_extract_prices():
             "zoneDistribution":   zone_distribution,
             "inferredZones":      inferred_zones,
             "message":            message,
+            "diagnosticLogs":     utsf_logger.get_logs(),
         })
 
     except Exception as exc:
         import traceback
         print(f"[UTSF:extract-prices] EXCEPTION: {exc}\n{traceback.format_exc()}")
-        return jsonify({"error": str(exc), "zoneRates": {}, "confidence": 0}), 500
+        return jsonify({
+            "error": str(exc),
+            "zoneRates": {},
+            "confidence": 0,
+            "diagnosticLogs": utsf_logger.get_logs()
+        }), 500
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
@@ -1571,6 +1613,7 @@ def api_generate_bulk():
 
             quality = utsf.get("dataQuality", 0)
             stats   = utsf.get("stats", {})
+            from utsf_logger import utsf_logger
             return jsonify({
                 "ok":       True,
                 "utsf":     utsf,
@@ -1578,6 +1621,7 @@ def api_generate_bulk():
                 "stats":    stats,
                 "files":    saved,
                 "message":  f"Generated UTSF with quality {quality:.0f}/100",
+                "diagnosticLogs": utsf_logger.get_logs(),
             })
 
         finally:
@@ -1592,7 +1636,12 @@ def api_generate_bulk():
     except Exception as exc:
         import traceback
         print(f"[generate-bulk] Error: {exc}\n{traceback.format_exc()}")
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        from utsf_logger import utsf_logger
+        return jsonify({
+            "ok": False,
+            "error": str(exc),
+            "diagnosticLogs": utsf_logger.get_logs()
+        }), 500
     finally:
         # Always clean up temp transporter folder
         try:

@@ -27,6 +27,8 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
+from knowledge.charge_richness import charge_num as _charge_num, charge_richness as _charge_richness
+
 # Force UTF-8 output on Windows (avoids CP1252 UnicodeEncodeError with box/check chars)
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -130,6 +132,75 @@ def collect_files_from_folder(folder: str) -> List[str]:
     return files
 
 
+def _charges_equivalent(a, b) -> bool:
+    """True if two charge-field candidates represent the same value, looking
+    past type/format differences (20 vs "20" vs 20.0 vs "20.0%-shaped dicts").
+    Prevents spurious 'ambiguous' flags when two parsers agree but format
+    their output differently.
+    """
+    if a == b:
+        return True
+    # Both numeric-ish scalars (covers int/float/numeric-string combinations)
+    if isinstance(a, (int, float, str)) and isinstance(b, (int, float, str)) \
+            and not isinstance(a, bool) and not isinstance(b, bool):
+        na, nb = _charge_num(a), _charge_num(b)
+        if na or nb:
+            return abs(na - nb) < 1e-9
+    # {v,f}-style dicts that resolve to the same numeric pair, regardless of
+    # which alias each side used (v/value/variable, f/fixed)
+    if isinstance(a, dict) and isinstance(b, dict):
+        def _resolve(d):
+            return (
+                _charge_num(d.get("v", d.get("value", d.get("variable")))),
+                _charge_num(d.get("f", d.get("fixed", d.get("value")))),
+            )
+        ra, rb = _resolve(a), _resolve(b)
+        if (ra[0] or ra[1] or rb[0] or rb[1]) and abs(ra[0] - rb[0]) < 1e-9 and abs(ra[1] - rb[1]) < 1e-9:
+            return True
+    return False
+
+
+def _merge_charge_field(charges: Dict, sources: Dict, ambiguities: List[Dict],
+                        field: str, new_val, src: str):
+    """Merge a single charge field using richness comparison instead of
+    last-write-wins, recording genuine conflicts as ambiguities for HITL review.
+    """
+    if field not in charges:
+        if _charge_richness(new_val) > 0 or new_val is not None:
+            charges[field] = new_val
+            sources[field] = src
+            print(f"[Merge] charges.{field}: SET from {src} -> {new_val!r}")
+        return
+
+    cur_val   = charges[field]
+    cur_score = _charge_richness(cur_val)
+    new_score = _charge_richness(new_val)
+
+    if new_score > cur_score:
+        print(f"[Merge] charges.{field}: ACCEPTED candidate from {src} "
+              f"(richness {new_score} > {cur_score}); {cur_val!r} -> {new_val!r}")
+        charges[field] = new_val
+        sources[field] = src
+    elif new_score < cur_score:
+        print(f"[Merge] charges.{field}: REJECTED candidate from {src} "
+              f"(richness {new_score} < {cur_score}); kept {cur_val!r}")
+    else:
+        if new_score == 0 or _charges_equivalent(cur_val, new_val):
+            return
+        # Equal richness, genuinely different values — don't silently pick one;
+        # surface both to the user as a two-option choice (per HITL review flow).
+        print(f"[Merge] charges.{field}: AMBIGUOUS — {cur_val!r} (from "
+              f"{sources.get(field, '?')}) vs {new_val!r} (from {src}); "
+              f"flagging for user review")
+        ambiguities.append({
+            "field": field,
+            "candidates": [
+                {"value": cur_val, "source": sources.get(field, "?")},
+                {"value": new_val, "source": src},
+            ],
+        })
+
+
 def merge_extracted_data(pieces: List[Dict]) -> Dict:
     """Merge multiple extracted data dicts into one."""
     merged = {
@@ -139,8 +210,11 @@ def merge_extracted_data(pieces: List[Dict]) -> Dict:
         "served_pincodes": [],
         "oda_pincodes": [],
         "zone_pincodes": {},
+        "pincode_geo_hints": {},
         "serviceability": {},
         "_parseAudit": [],
+        "_chargeSources": {},       # field -> source filename whose value won
+        "_chargeAmbiguities": [],   # [{field, candidates: [{value, source}, {value, source}]}]
     }
 
     # Known field sets for flat-JSON detection (keys used by encoder)
@@ -171,25 +245,32 @@ def merge_extracted_data(pieces: List[Dict]) -> Dict:
                     {k: v for k, v in piece.items() if not k.startswith("_")}
                 )
 
-        # Merge charges: iterate ALL matching wrappers (no break — matches v6 behaviour
-        # so "pricing.priceRate" unwrapping still works when both keys exist)
+        # Merge charges field-by-field using richness comparison (mirrors the
+        # zone_matrix pair-count pattern below) instead of blind dict.update(),
+        # which let a poorer later candidate silently overwrite a richer earlier
+        # one (e.g. fuel "1%" from Excel clobbering "20%" from the PDF, or a
+        # plain ODA scalar clobbering a full ODA rate matrix).
+        src = piece.get("_sourceFile", "?")
         merged_charges = False
         for key in ["charges", "pricing"]:
             if key in piece and isinstance(piece[key], dict):
-                merged["charges"].update(piece[key])
+                for field, new_val in piece[key].items():
+                    if field.startswith("_"):
+                        continue
+                    canon = _CHARGE_ALIAS.get(field, field)
+                    _merge_charge_field(merged["charges"], merged["_chargeSources"],
+                                        merged["_chargeAmbiguities"], canon, new_val, src)
                 merged_charges = True
         if not merged_charges:
             # Flat JSON: only merge recognised charge fields (avoid polluting with
             # zone_matrix, served_pincodes, etc.)
-            flat_charges = {}
             for k, v in piece.items():
                 if k.startswith("_"):
                     continue
                 canon = _CHARGE_ALIAS.get(k, k)
                 if canon in _CHARGE_FIELDS:
-                    flat_charges[canon] = v
-            if flat_charges:
-                merged["charges"].update(flat_charges)
+                    _merge_charge_field(merged["charges"], merged["_chargeSources"],
+                                        merged["_chargeAmbiguities"], canon, v, src)
 
         # Zone matrix: prefer the one with more total (origin × destination) rate pairs.
         # Counting only origins misses the case where two single-origin matrices
@@ -227,6 +308,11 @@ def merge_extracted_data(pieces: List[Dict]) -> Dict:
             if zone not in merged["zone_pincodes"]:
                 merged["zone_pincodes"][zone] = []
             merged["zone_pincodes"][zone].extend(pins)
+
+        # Vendor-sourced city/state hints for pincodes (used to recover
+        # pincodes absent from the master pincodes.json snapshot — see
+        # ZoneMapper.build_serviceability / knowledge/geo_overrides.py)
+        merged["pincode_geo_hints"].update(piece.get("pincode_geo_hints", {}))
 
         # Collect parse audit entries from each file
         merged["_parseAudit"].extend(piece.get("_parseAudit", []))
@@ -266,6 +352,10 @@ def _log_data_summary(label: str, data: Dict, folder: str):
         total_zp = sum(len(v) for v in zp.values())
         keys_found.append(f"zone_pincodes({total_zp:,} across {len(zp)} zones)")
 
+    gh = data.get("pincode_geo_hints", {})
+    if gh:
+        keys_found.append(f"pincode_geo_hints({len(gh):,})")
+
     ch = data.get("charges", {})
     if ch:
         keys_found.append(f"charges({len(ch)} fields)")
@@ -278,6 +368,18 @@ def _log_data_summary(label: str, data: Dict, folder: str):
         print(f"    -> data keys extracted: [{', '.join(keys_found)}]")
     else:
         print(f"    -> data keys extracted: (none)")
+
+    from utsf_logger import utsf_logger
+    utsf_logger.log_stage(
+        "PARSER_ODA_EXTRACTED",
+        f"Extracted {len(op)} ODA pincodes from {label}",
+        {"count": len(op)}
+    )
+    utsf_logger.log_stage(
+        "PARSER_SERVED_EXTRACTED",
+        f"Extracted {len(sp)} served pincodes from {label}",
+        {"count": len(sp)}
+    )
 
 
 def _log_merged_summary(merged: Dict):
@@ -321,6 +423,10 @@ def _log_merged_summary(merged: Dict):
     if zp:
         total = sum(len(v) for v in zp.values())
         print(f"    zone_pincodes   : {total:,} across {len(zp)} zones")
+
+    gh = merged.get("pincode_geo_hints", {})
+    if gh:
+        print(f"    pincode_geo_hints: {len(gh):,} pincodes with vendor city/state")
 
 
 def _log_serviceability_encoding(utsf: Dict):
@@ -392,6 +498,9 @@ def generate_utsf_for_transporter(
     Main generation pipeline for a single transporter.
     Returns path to generated UTSF file, or None on failure.
     """
+    from utsf_logger import utsf_logger
+    utsf_logger.init_logs()
+
     folder = os.path.join(TRANSPORTERS_DIR, transporter_name)
     if not os.path.exists(folder):
         print(f"[ERROR] Folder not found: {folder}")
@@ -465,13 +574,21 @@ def generate_utsf_for_transporter(
         ext    = os.path.splitext(file_path)[1].lower()
         subfolder = os.path.basename(os.path.dirname(file_path))
 
+        utsf_logger.log_stage(
+            "PARSER_START",
+            f"Starting parse for {rel}",
+            {"file_name": rel, "file_type": ext}
+        )
+
         print(f"\n  --- Parsing file {file_idx}/{len(files)}: {rel} "
               f"[subfolder={subfolder}] ---")
 
         if ext == ".json":
             try:
                 data = parse_json_file(file_path)
+                data["_sourceFile"] = rel
                 extracted_pieces.append(data)
+                _log_data_summary(rel, data, folder)
                 # Log key-level summary for JSON
                 top_keys = list(data.keys())[:8]
                 print(f"    Parser: JSON (direct)")
@@ -501,6 +618,7 @@ def generate_utsf_for_transporter(
         try:
             result = parser.parse(file_path, doc_context=doc_ctx)
             piece  = result.get("data", {})
+            piece["_sourceFile"] = rel
             extracted_pieces.append(piece)
 
             n_tables = len(result.get("tables", []))
@@ -685,6 +803,16 @@ def generate_utsf_for_transporter(
         utsf["_parseAudit"] = parse_audit
         print(f"\n  Parse audit: {len(parse_audit)} uncertain match(es) recorded for review")
 
+    # Store genuine merge ambiguities (e.g. two source files disagreeing on
+    # fuel% with equal confidence) so the review UI can ask the user to pick
+    # between exactly the two conflicting candidates rather than silently
+    # keeping whichever file happened to be processed last.
+    charge_ambiguities = merged.get("_chargeAmbiguities", [])
+    if charge_ambiguities:
+        utsf["_chargeAmbiguities"] = charge_ambiguities
+        print(f"\n  Charge ambiguities: {len(charge_ambiguities)} field(s) need user "
+              f"review (conflicting candidates of equal confidence)")
+
     # ── Auto-learning: passively confirm parse audit entries that produced
     #    real data in the final UTSF (method = "fuzzy" / "token" / "geo").
     #    This teaches the dictionary without any user clicking.
@@ -734,6 +862,16 @@ def generate_utsf_for_transporter(
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     safe_name   = transporter_name.lower().replace(" ", "_").replace("/", "_")
     output_path = os.path.join(OUTPUT_DIR, f"{safe_name}.utsf.json")
+
+    from utsf_logger import utsf_logger
+    final_oda_count = utsf.get("stats", {}).get("totalOdaPincodes", 0)
+    utsf_logger.log_stage(
+        "UTSF_FINAL",
+        f"Completed UTSF encoding with {final_oda_count} ODA pincodes",
+        {"total_oda_pincodes": final_oda_count}
+    )
+    utsf["diagnosticLogs"] = utsf_logger.get_logs()
+
     encoder.save(utsf, output_path)
 
     quality = utsf.get("dataQuality", 0)

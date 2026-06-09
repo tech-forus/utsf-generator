@@ -4,3 +4,22 @@
 2026-06-03 13:25:59 INFO     [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
  * Running on http://127.0.0.1:5000
 2026-06-03 13:25:59 INFO     [33mPress CTRL+C to quit[0m
+2026-06-03 13:26:01 INFO     127.0.0.1 - - [03/Jun/2026 13:26:01] "GET / HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-03 13:26:03 INFO     127.0.0.1 - - [03/Jun/2026 13:26:03] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 13:26:05 INFO     127.0.0.1 - - [03/Jun/2026 13:26:05] "GET /output/ssi HTTP/1.1" 200 -
+2026-06-03 13:26:05 INFO     127.0.0.1 - - [03/Jun/2026 13:26:05] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 13:26:05 INFO     127.0.0.1 - - [03/Jun/2026 13:26:05] "GET /api/learn-stats HTTP/1.1" 200 -
+2026-06-03 13:26:17 INFO     127.0.0.1 - - [03/Jun/2026 13:26:17] "GET /output/ssi/download HTTP/1.1" 200 -
+2026-06-03 14:36:42 INFO     127.0.0.1 - - [03/Jun/2026 14:36:42] "GET / HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-03 14:36:46 INFO     127.0.0.1 - - [03/Jun/2026 14:36:46] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 14:36:47 INFO     127.0.0.1 - - [03/Jun/2026 14:36:47] "DELETE /transporter/fjyhj HTTP/1.1" 200 -
+2026-06-03 14:36:47 INFO     127.0.0.1 - - [03/Jun/2026 14:36:47] "GET / HTTP/1.1" 200 -
+2026-06-03 14:36:47 INFO     127.0.0.1 - - [03/Jun/2026 14:36:47] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 14:36:48 INFO     127.0.0.1 - - [03/Jun/2026 14:36:48] "DELETE /transporter/ssi HTTP/1.1" 200 -
+2026-06-03 14:36:48 INFO     127.0.0.1 - - [03/Jun/2026 14:36:48] "GET / HTTP/1.1" 200 -
+2026-06-03 14:36:49 INFO     127.0.0.1 - - [03/Jun/2026 14:36:49] "GET /api/status HTTP/1.1" 200 -
+2026-06-03 14:36:51 INFO     127.0.0.1 - - [03/Jun/2026 14:36:51] "DELETE /transporter/tciii HTTP/1.1" 200 -
+2026-06-03 14:36:51 INFO     127.0.0.1 - - [03/Jun/2026 14:36:51] "GET / HTTP/1.1" 200 -
+2026-06-03 14:36:51 INFO     127.0.0.1 - - [03/Jun/2026 14:36:51] "GET /api/status HTTP/1.1" 200 -

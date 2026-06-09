@@ -249,6 +249,14 @@ class GeoValidator:
                 rejected.append((pin, "Invalid format"))
                 continue
 
+            # Master DB is authoritative — if the pincode is recorded in
+            # pincodes.json with this exact zone, accept it regardless of
+            # prefix heuristics. Prefix rules are only for unknown pincodes.
+            known_zone = self._pin_to_zone.get(pin_int)
+            if known_zone == zone_upper:
+                accepted.append(pin_int)
+                continue
+
             prefix1 = str(pin_int)[0]
             impossible = IMPOSSIBLE_ZONES_FOR_PREFIX.get(prefix1, set())
 
@@ -258,7 +266,6 @@ class GeoValidator:
                 continue
 
             if strict:
-                known_zone = self._pin_to_zone.get(pin_int)
                 if known_zone and known_zone != zone_upper:
                     rejected.append((pin_int,
                         f"DB says zone={known_zone}, not {zone_upper}"))

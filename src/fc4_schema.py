@@ -18,8 +18,15 @@ Top-level structure:
 
 Coverage modes (serviceability.{zone}.mode):
   FULL_ZONE        All pincodes in canonical zone are served
-  FULL_MINUS_EXCEPT  All EXCEPT listed → stored in exceptRanges/exceptSingles
-  ONLY_SERVED      Only listed pincodes → stored in servedRanges/servedSingles
+  FULL_MINUS_EXCEPT  All EXCEPT listed → stored in exceptRanges/exceptSingles.
+                   RECOGNISED FOR BACKWARDS COMPATIBILITY ONLY — the generator
+                   no longer emits this mode (see determine_coverage_mode):
+                   reconstructing "served" as "zone minus exceptions" requires
+                   the consumer's pincode→zone snapshot to exactly match the
+                   generator's, and any drift fabricates phantom-served pincodes.
+  ONLY_SERVED      Only listed pincodes → stored in servedRanges/servedSingles.
+                   The generator's only mode for partial coverage — the explicit
+                   list is immune to pincode-snapshot drift between systems.
   NOT_SERVED       Zone not served at all
 
 Charge format:
@@ -35,6 +42,13 @@ odaCharges types:
   {type:"distance_weight_matrix", matrix}  distance × weight table
 
 Range format: {"s": startPincode, "e": endPincode}
+
+pinOverrides (per-zone): [{pincode, city, state}] — vendor-claimed pincodes
+absent from the master pincodes.json reference snapshot, recovered using the
+vendor's own (cleaned) city/state and bucketed under FreightCompare's
+best-guess canonical zone (never the vendor's claimed zone). Kept outside
+range compression so the normal coverage path is untouched. See
+ZoneMapper.build_serviceability / knowledge/geo_overrides.py.
 """
 
 from typing import List, Dict, Any
@@ -47,7 +61,7 @@ ALL_ZONES = [
     "N1", "N2", "N3", "N4",
     "S1", "S2", "S3", "S4",
     "E1", "E2",
-    "W1", "W2",
+    "W1", "W2", "W3",   # W3 = Nagpur hub (used by multiple vendors)
     "C1", "C2",
     "NE1", "NE2",
     "X1", "X2", "X3",   # Special: A&N Islands, Lakshadweep, Leh/Ladakh/J&K
@@ -57,7 +71,7 @@ REGIONS = {
     "North":      ["N1", "N2", "N3", "N4"],
     "South":      ["S1", "S2", "S3", "S4"],
     "East":       ["E1", "E2"],
-    "West":       ["W1", "W2"],
+    "West":       ["W1", "W2", "W3"],
     "Central":    ["C1", "C2"],
     "North East": ["NE1", "NE2"],
     "Special":    ["X1", "X2", "X3"],
@@ -133,11 +147,24 @@ def expand_ranges(ranges: List[Dict], singles: List[int]) -> List[int]:
 def determine_coverage_mode(
     served_pincodes: set,
     zone_pincodes: set,
-    threshold: float = 0.5
 ) -> str:
     """
-    Choose the most compact coverage mode based on coverage ratio.
-    Returns canonical v2.1 mode name.
+    Choose the coverage mode for a zone. Returns canonical v2.1 mode name.
+
+    Deliberately NEVER returns FULL_MINUS_EXCEPT. That mode stores only the
+    *exception* list and reconstructs "served" as "every pincode the consumer's
+    own pincodes.json places in this zone, minus the listed exceptions" — which
+    silently fabricates "phantom served" pincodes whenever the consumer's
+    pincode→zone snapshot differs even slightly from the one used at generation
+    (verified real-world case: 9 pincodes reported served that the source vendor
+    never claimed, because they sat in this zone's bucket in one snapshot but
+    not the other). ONLY_SERVED stores the exact confirmed-served set — the one
+    encoding that is immune to snapshot drift by construction, since it never
+    asks "what else belongs in this zone?" at reconstruction time. The modest
+    storage cost (a denser range list for high-coverage zones) is strictly
+    preferable to fabricating serviceability claims the vendor never made.
+    See ZoneMapper.build_serviceability and the FULL_MINUS_EXCEPT phantom-pincode
+    investigation for Far Fetched Bulk 2.
     """
     if not zone_pincodes or not served_pincodes:
         return MODE_NOT_SERVED
@@ -150,10 +177,8 @@ def determine_coverage_mode(
 
     if coverage >= 0.999:
         return MODE_FULL_ZONE
-    elif coverage >= threshold:
-        return MODE_FULL_MINUS_EXCEPT   # store exceptions (smaller list)
     else:
-        return MODE_ONLY_SERVED          # store served (smaller list)
+        return MODE_ONLY_SERVED
 
 
 # ─── Empty entry builders ──────────────────────────────────────────────────────
@@ -174,6 +199,12 @@ def empty_zone_entry() -> Dict:
         # ODA pincodes (inline — also in separate oda block)
         "odaRanges": [],
         "odaSingles": [],
+        # Vendor-claimed pincodes absent from master pincodes.json, recovered
+        # using the vendor's own (cleaned) city/state and bucketed under our
+        # best-guess canonical zone — never the vendor's claimed zone. Stays
+        # outside range compression. See ZoneMapper.build_serviceability /
+        # knowledge/geo_overrides.py.
+        "pinOverrides": [],
         # Stats
         "totalInZone": 0,
         "servedCount": 0,
@@ -224,6 +255,13 @@ UTSF_EMPTY_TEMPLATE = {
     "generatedBy": "utsf-generator",
     "sourceFiles": [],
     "dataQuality": 0.0,
+
+    # Canonical priceRate keys that had real data in the source documents —
+    # distinguishes "vendor explicitly quoted ₹0/NIL" from "vendor never
+    # addressed this charge type" (both must render as schema-required
+    # {v:0,f:0}/0.0 placeholders in priceRate; this list is how a reviewer
+    # or the UI tells them apart without guessing). See FC4Encoder._encode_pricing.
+    "_chargeFieldsFromSource": [],
 
     "meta": {
         "id": None,

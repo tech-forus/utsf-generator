@@ -834,15 +834,37 @@ class PDFParser(BaseParser):
                 except Exception as _crc_err:
                     print(f"[PDFParser] City-rate-card fallback failed: {_crc_err}")
 
-            # Pincodes: extract from PINCODE_LIST and ODA_LIST sections
+            # Pincodes from PINCODE_LIST sections → served only
             pin_text = ""
-            for cat in ("PINCODE_LIST", "ODA_LIST"):
-                for sec in sections_map.get(cat, []):
-                    pin_text += "\n" + sec.text
-            pins = self._extract_pincodes_from_text(pin_text if pin_text.strip() else text)
-            if pins:
-                data.setdefault("served_pincodes", [])
-                data["served_pincodes"].extend(pins)
+            for sec in sections_map.get("PINCODE_LIST", []):
+                pin_text += "\n" + sec.text
+
+            # Pincodes from ODA_LIST sections → served AND oda
+            oda_text = ""
+            for sec in sections_map.get("ODA_LIST", []):
+                oda_text += "\n" + sec.text
+
+            if not pin_text.strip() and not oda_text.strip():
+                # No classified sections — fall back to full text for served pincodes only
+                pins = self._extract_pincodes_from_text(text)
+                if pins:
+                    data.setdefault("served_pincodes", [])
+                    data["served_pincodes"].extend(pins)
+            else:
+                if pin_text.strip():
+                    pins = self._extract_pincodes_from_text(pin_text)
+                    if pins:
+                        data.setdefault("served_pincodes", [])
+                        data["served_pincodes"].extend(pins)
+                if oda_text.strip():
+                    oda_pins = self._extract_pincodes_from_text(oda_text)
+                    if oda_pins:
+                        data.setdefault("served_pincodes", [])
+                        data.setdefault("oda_pincodes", [])
+                        data["served_pincodes"].extend(oda_pins)
+                        data["oda_pincodes"].extend(oda_pins)
+                        print(f"[PDFParser] ODA_LIST sections: {len(oda_pins)} pincodes "
+                              f"→ served_pincodes + oda_pincodes")
 
         # ── Dedup ────────────────────────────────────────────────────────────
         if data.get("served_pincodes"):

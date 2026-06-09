@@ -117,6 +117,15 @@ class MatchResult:
 
 NO_MATCH = MatchResult(value=None, confidence=0.0, method="none")
 
+# Minimum normalised-string length eligible for fuzzy (difflib) matching.
+# Below this, SequenceMatcher ratios are dominated by 1-2 character
+# coincidences — e.g. a 3-letter hub-city code like "DEL"/"COK"/"BLR" can
+# score 0.6-0.8 against short charge synonyms like "edl"/"cod"/"lr", which
+# silently pulls unrelated rate-matrix values into charge/company fields.
+# Legitimate short labels ("COD", "ROV", "GST"...) are still handled by the
+# exact/normalised layers above — only the fuzzy *fallback* needs this guard.
+_MIN_FUZZY_LEN = 5
+
 
 def _normalise(s: str) -> str:
     """Lowercase, strip punctuation, collapse whitespace."""
@@ -279,12 +288,20 @@ class SmartMatcher:
         if best_overlap >= 0.7:
             return MatchResult(value=best_val, confidence=0.75, method="token")
 
-        # L5: fuzzy string match
-        matches = difflib.get_close_matches(n, key_list, n=1, cutoff=max(0.6, min_confidence))
-        if matches:
-            val, _ = norm_table[matches[0]]
-            sim = difflib.SequenceMatcher(None, n, matches[0]).ratio()
-            return MatchResult(value=val, confidence=round(sim * 0.9, 3), method="fuzzy")
+        # L5: fuzzy string match — short strings are unreliable (a 3-letter hub
+        # code like "DEL"/"COK" can score 0.6-0.8 against "edl"/"cod"), so skip
+        # this layer entirely below _MIN_FUZZY_LEN. Also: the reported confidence
+        # is `sim * 0.9` (deflated), so the threshold must be checked against
+        # that FINAL value, not the raw `sim` used for difflib's cutoff — a
+        # candidate can clear the cutoff yet still report below min_confidence.
+        if len(n) >= _MIN_FUZZY_LEN:
+            matches = difflib.get_close_matches(n, key_list, n=1, cutoff=0.6)
+            if matches:
+                val, _ = norm_table[matches[0]]
+                sim = difflib.SequenceMatcher(None, n, matches[0]).ratio()
+                confidence = round(sim * 0.9, 3)
+                if confidence >= min_confidence:
+                    return MatchResult(value=val, confidence=confidence, method="fuzzy")
 
         return NO_MATCH
 
@@ -327,12 +344,18 @@ class SmartMatcher:
         if best_overlap >= 0.65 and best_val is not None:
             return MatchResult(value=best_val, confidence=0.78, method="token")
 
-        # Fuzzy
-        matches = difflib.get_close_matches(n, self._zone_keys, n=1, cutoff=max(0.58, min_confidence))
-        if matches:
-            val, _ = self._zone_norm[matches[0]]
-            sim = difflib.SequenceMatcher(None, n, matches[0]).ratio()
-            return MatchResult(value=val, confidence=round(sim * 0.88, 3), method="fuzzy")
+        # Fuzzy — same length guard + confidence-vs-cutoff consistency fix as
+        # in _lookup (see comment there): short zone labels/codes are unreliable
+        # for SequenceMatcher, and the threshold must apply to the deflated
+        # `sim * 0.88` confidence that's actually returned, not the raw `sim`.
+        if len(n) >= _MIN_FUZZY_LEN:
+            matches = difflib.get_close_matches(n, self._zone_keys, n=1, cutoff=0.58)
+            if matches:
+                val, _ = self._zone_norm[matches[0]]
+                sim = difflib.SequenceMatcher(None, n, matches[0]).ratio()
+                confidence = round(sim * 0.88, 3)
+                if confidence >= min_confidence:
+                    return MatchResult(value=val, confidence=confidence, method="fuzzy")
 
         return NO_MATCH
 

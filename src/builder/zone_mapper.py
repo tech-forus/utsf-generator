@@ -21,13 +21,14 @@ import json
 import os
 from typing import Dict, List, Set, Optional, Tuple
 from collections import defaultdict
+from utsf_logger import utsf_logger
 
 from fc4_schema import (
     ALL_ZONES, REGIONS, ZONE_TO_REGION,
     compress_to_ranges, expand_ranges,
     determine_coverage_mode, empty_zone_entry,
     MODE_NORMALIZE,
-    MODE_FULL_ZONE, MODE_FULL_MINUS_EXCEPT, MODE_ONLY_SERVED, MODE_NOT_SERVED,
+    MODE_FULL_ZONE, MODE_ONLY_SERVED, MODE_NOT_SERVED,
 )
 
 # Common simplified zone labels used by Indian transporters → candidate UTSF zones
@@ -256,7 +257,7 @@ class ZoneMapper:
         served_pincodes: List[int],
         oda_pincodes: List[int] = None,
         transporter_zone_override: Dict[int, str] = None,
-        coverage_threshold: float = 0.5
+        pincode_geo_hints: Dict[int, Tuple[str, str]] = None,
     ) -> Dict:
         """
         Build the v2.1 UTSF serviceability block from a list of served pincodes.
@@ -270,12 +271,26 @@ class ZoneMapper:
               servedSingles  [int]
               crossZoneRanges / crossZoneSingles
               odaRanges / odaSingles / odaCount  (inline ODA; also in oda block)
+              pinOverrides   [{pincode, city, state}] — vendor-claimed pincodes
+                             absent from master pincodes.json, recovered using the
+                             vendor's own (cleaned) city/state and bucketed under
+                             our best-guess canonical zone (never the vendor's
+                             claimed zone — see knowledge/geo_overrides.py)
               totalInZone, servedCount, coveragePercent
+
+        Args:
+            pincode_geo_hints: optional {pincode: (city, state)} raw vendor-sourced
+                hints, used ONLY to recover pincodes missing from the master
+                pincodes.json snapshot into `pinOverrides`. Never used to override
+                a canonical zone lookup that already succeeded.
         """
         if oda_pincodes is None:
             oda_pincodes = []
         if transporter_zone_override is None:
             transporter_zone_override = {}
+        if pincode_geo_hints is None:
+            pincode_geo_hints = {}
+        from knowledge.geo_overrides import clean_geo_hint
 
         # ── Geo validation: reject impossible pincodes before processing ──────
         gv = self._geo_validator
@@ -313,14 +328,22 @@ class ZoneMapper:
         served_set = set(served_pincodes)
         oda_set    = set(oda_pincodes)
 
+        from utsf_logger import utsf_logger
+        utsf_logger.log_stage(
+            "ZONE_MAPPER_INPUT",
+            f"Entering ZoneMapper build_serviceability with {len(oda_set)} ODA pincodes",
+            {"oda_set_size": len(oda_set)}
+        )
+
         print(f"[ZoneMapper.build_serviceability] Input: "
               f"{len(served_set):,} served, {len(oda_set):,} ODA, "
-              f"{len(transporter_zone_override):,} zone overrides, "
-              f"threshold={coverage_threshold}")
+              f"{len(transporter_zone_override):,} zone overrides")
 
         # Step 1: Effective zone per served pincode
         effective_zone: Dict[int, str] = {}
         unknown_pincodes = 0
+        pin_overrides_by_zone: Dict[str, List[Dict]] = defaultdict(list)
+        recovered_pincodes = 0
         for pin in served_set:
             if pin in transporter_zone_override:
                 effective_zone[pin] = transporter_zone_override[pin].upper()
@@ -330,10 +353,28 @@ class ZoneMapper:
                     effective_zone[pin] = canonical
                 else:
                     unknown_pincodes += 1
+                    # Not in our master snapshot — try to recover it from the
+                    # vendor's own (cleaned) city/state rather than silently
+                    # dropping it. Bucket under OUR best-guess canonical zone
+                    # (prefix-based inference), never the vendor's claimed zone
+                    # — see knowledge/geo_overrides.py and the pinOverrides design.
+                    hint = pincode_geo_hints.get(pin)
+                    cleaned = clean_geo_hint(hint[0], hint[1]) if hint else None
+                    if cleaned:
+                        city, state = cleaned
+                        bucket_zone = (gv.get_likely_zones(pin)[0] if gv
+                                       else ALL_ZONES[0])
+                        pin_overrides_by_zone[bucket_zone].append({
+                            "pincode": pin, "city": city, "state": state,
+                        })
+                        recovered_pincodes += 1
 
         if unknown_pincodes:
+            dropped = unknown_pincodes - recovered_pincodes
             print(f"[ZoneMapper.build_serviceability] "
-                  f"{unknown_pincodes:,} served pincodes not in master (skipped)")
+                  f"{unknown_pincodes:,} served pincodes not in master: "
+                  f"{recovered_pincodes:,} recovered via pinOverrides "
+                  f"(vendor city/state), {dropped:,} dropped (no usable geo hint)")
 
         # Step 2: Group by effective zone
         served_by_effective_zone: Dict[str, Set[int]] = defaultdict(set)
@@ -365,29 +406,28 @@ class ZoneMapper:
             canonical_pins  = self.zone_to_pincodes.get(zone, set())
             served_in_zone  = served_by_effective_zone.get(zone, set())
             cross_zone_pins = cross_zone_by_target.get(zone, set())
+            zone_overrides  = pin_overrides_by_zone.get(zone, [])
 
             # Pincodes from canonical zone only (no cross-zone arrivals)
             canonical_served = served_in_zone - cross_zone_pins
 
-            mode = determine_coverage_mode(
-                canonical_served, canonical_pins, coverage_threshold
-            )
+            mode = determine_coverage_mode(canonical_served, canonical_pins)
 
-            if mode == MODE_NOT_SERVED and not cross_zone_pins:
+            if mode == MODE_NOT_SERVED and not cross_zone_pins and not zone_overrides:
                 continue
 
             entry = empty_zone_entry()
             entry["mode"] = mode
             entry["totalInZone"] = len(canonical_pins)
+            entry["pinOverrides"] = zone_overrides
             mode_counts[mode] = mode_counts.get(mode, 0) + 1
 
-            if mode == MODE_FULL_MINUS_EXCEPT:
-                exceptions = canonical_pins - canonical_served
-                compressed = compress_to_ranges(sorted(exceptions))
-                entry["exceptRanges"]  = compressed["ranges"]
-                entry["exceptSingles"] = compressed["singles"]
-
-            elif mode == MODE_ONLY_SERVED:
+            # determine_coverage_mode never returns FULL_MINUS_EXCEPT (see its
+            # docstring — that mode's "zone minus exceptions" reconstruction is
+            # not drift-proof). The only modes reaching here that need explicit
+            # pincode storage is ONLY_SERVED — store the exact confirmed-served
+            # set, which is immune to pincode-snapshot drift between systems.
+            if mode == MODE_ONLY_SERVED:
                 compressed = compress_to_ranges(sorted(canonical_served))
                 entry["servedRanges"]  = compressed["ranges"]
                 entry["servedSingles"] = compressed["singles"]
@@ -400,6 +440,11 @@ class ZoneMapper:
 
             # ODA inline
             oda_in_zone = (served_in_zone | cross_zone_pins) & oda_set
+            utsf_logger.log_stage(
+                "ZONE_MAPPER_PER_ZONE",
+                f"Zone {zone}: {len(oda_in_zone)} ODA pincodes resolved",
+                {"zone": zone, "oda_in_zone_count": len(oda_in_zone)}
+            )
             if oda_in_zone:
                 compressed = compress_to_ranges(sorted(oda_in_zone))
                 entry["odaRanges"]  = compressed["ranges"]
@@ -417,9 +462,10 @@ class ZoneMapper:
             cov_str   = f"{entry['coveragePercent']:.1f}%"
             cross_str = f"  +{len(cross_zone_pins)} cross-zone" if cross_zone_pins else ""
             oda_str   = f"  ODA:{len(oda_in_zone)}" if oda_in_zone else ""
+            ovr_str   = f"  +{len(zone_overrides)} pinOverrides" if zone_overrides else ""
             print(f"[ZoneMapper.build_serviceability]   {zone:>4}: "
                   f"{len(canonical_served):>6,}/{len(canonical_pins):>6,} "
-                  f"({cov_str:>6}) -> {mode:<18}{cross_str}{oda_str}")
+                  f"({cov_str:>6}) -> {mode:<18}{cross_str}{oda_str}{ovr_str}")
 
             serviceability[zone] = entry
             zones_built.append(zone)
@@ -444,6 +490,15 @@ class ZoneMapper:
                     "odaRanges":  oda_ranges,
                     "odaSingles": oda_singles,
                 }
+        total_pins = sum(entry.get("odaCount", 0) for entry in oda_block.values())
+        utsf_logger.log_stage(
+            "ODA_BLOCK_OUTPUT",
+            f"Built ODA block with {len(oda_block)} zones and {total_pins} total ODA pincodes",
+            {
+                "zone_count": len(oda_block),
+                "total_oda_pincodes": total_pins
+            }
+        )
         return oda_block
 
     def detect_transporter_zone_overrides(

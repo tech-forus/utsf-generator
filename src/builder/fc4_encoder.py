@@ -390,6 +390,48 @@ class FC4Encoder:
         else:
             pr["invoiceValueCharges"] = None
 
+        # ── Source-coverage tracking ───────────────────────────────────────────
+        # The UTSF schema requires every priceRate charge field to be present
+        # with a numeric {v,f}/scalar shape, so the encoder must still emit a
+        # {v:0,f:0}/0.0 placeholder for charge types the source never mentions
+        # (e.g. "prepaidCharges" when the vendor's rate card has no prepaid
+        # line item at all). That placeholder is schema-compliant but is NOT
+        # vendor-quoted data — it's indistinguishable from "vendor explicitly
+        # quoted ₹0/NIL" unless we record, separately, which fields actually
+        # came from the source. `_chargeFieldsFromSource` is exactly that
+        # record: reviewers/UI can use it to render "not specified by vendor"
+        # instead of "₹0" for fields absent from this list, without changing
+        # any existing field's type (no risk to the calculator/comparison math
+        # that already depends on the {v,f}/scalar shapes being present).
+        _CHARGE_FIELD_ALIASES = {
+            "minWeight":           ["minWeight"],
+            "minCharges":          ["minCharges"],
+            "docketCharges":       ["docketCharges"],
+            "greenTax":            ["greenTax"],
+            "daccCharges":         ["daccCharges"],
+            "gst":                 ["gst", "gstPercent", "igst", "tax_percent"],
+            "miscCharges":         ["miscCharges", "ewayCharges"],
+            "dodCharges":          ["dodCharges", "dod"],
+            "fuel":                ["fuel", "fuelSurcharge", "fuel_percent"],
+            "rovCharges":          ["rovCharges", "rov"],
+            "insuranceCharges":    ["insuranceCharges", "insurance"],
+            "odaCharges":          ["odaCharges", "oda"],
+            "handlingCharges":     ["handlingCharges", "handling"],
+            "fmCharges":           ["fmCharges", "fm"],
+            "appointmentCharges":  ["appointmentCharges", "appointment"],
+            "codCharges":          ["codCharges", "cod"],
+            "prepaidCharges":      ["prepaidCharges", "prepaid"],
+            "topayCharges":        ["topayCharges", "topay"],
+            "invoiceValueCharges": ["invoiceValueCharges", "invoiceValue"],
+        }
+        _charge_fields_in_source = sorted(
+            field for field, aliases in _CHARGE_FIELD_ALIASES.items()
+            if any(charges.get(a) is not None for a in aliases)
+        )
+        utsf["_chargeFieldsFromSource"] = _charge_fields_in_source
+        print(f"[Encoder._encode_pricing]   chargeFieldsFromSource ({len(_charge_fields_in_source)}): "
+              f"{_charge_fields_in_source}")
+
         # ── Log charge summary ─────────────────────────────────────────────────
         present = [k for k in ("fuel","rovCharges","insuranceCharges","odaCharges",
                                 "handlingCharges","fmCharges","codCharges",
@@ -609,6 +651,12 @@ class FC4Encoder:
         oda_pincodes = list(map(int, raw.get("oda_pincodes", [])))
         print(f"[Encoder._encode_serviceability] ODA pincodes: {len(oda_pincodes):,}")
 
+        # Vendor-sourced city/state hints, keyed by int pincode — used to
+        # recover pincodes absent from master pincodes.json into pinOverrides
+        # rather than silently dropping them (see geo_overrides.py).
+        raw_geo_hints = raw.get("pincode_geo_hints") or {}
+        geo_hints = {int(p): tuple(v) for p, v in raw_geo_hints.items()}
+
         # zone_pincodes (most precise)
         zone_pincodes = raw.get("zone_pincodes") or raw.get("zonePincodes")
         if zone_pincodes and isinstance(zone_pincodes, dict):
@@ -618,7 +666,7 @@ class FC4Encoder:
             overrides = self.zone_mapper.detect_transporter_zone_overrides(zone_pincodes)
             all_served = [int(p) for pins in zone_pincodes.values() for p in pins]
             utsf["serviceability"] = self.zone_mapper.build_serviceability(
-                all_served, oda_pincodes, overrides
+                all_served, oda_pincodes, overrides, pincode_geo_hints=geo_hints
             )
             return
 
@@ -629,7 +677,7 @@ class FC4Encoder:
             print(f"[Encoder._encode_serviceability] flat served_pincodes: "
                   f"{len(served):,}")
             utsf["serviceability"] = self.zone_mapper.build_serviceability(
-                served, oda_pincodes
+                served, oda_pincodes, pincode_geo_hints=geo_hints
             )
             return
 
@@ -669,6 +717,10 @@ class FC4Encoder:
             entry["odaRanges"]  = data.get("odaRanges", [])
             entry["odaSingles"] = data.get("odaSingles", [])
             entry["odaCount"]   = data.get("odaCount", 0)
+
+            # Vendor-recovered pincodes outside master pincodes.json — pass
+            # through unchanged so re-encoding an existing UTSF preserves them
+            entry["pinOverrides"] = data.get("pinOverrides", [])
 
             # Stats
             entry["totalInZone"]     = data.get("totalInZone", data.get("totalCount", 0))

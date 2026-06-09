@@ -84,6 +84,21 @@ def _get_gv():
 # ---------------------------------------------------------------------------
 # Zone name expansion table
 # ---------------------------------------------------------------------------
+# Sheet-name keywords that mark a sheet as a hub-code↔zone LOOKUP table
+# (e.g. "Hub City Key": Hub Code | Zone | City | Regions). These sheets are
+# pure reference/key tables — their cell values are codes/labels, never
+# charge amounts — so charge extraction must never run on them. Shared
+# between `_extract_hub_zone_key` and the `_auto_detect` charge-skip guard
+# so the two stay in sync (one definition governs both decisions).
+_HUB_KEY_SHEET_KEYWORDS = ('hub city key', 'hub zone map', 'hub zone key',
+                           'zone key', 'hub key', 'hub map')
+
+
+def _is_hub_key_sheet(sheet_name: str) -> bool:
+    name_lower = sheet_name.lower().strip()
+    return any(kw in name_lower for kw in _HUB_KEY_SHEET_KEYWORDS)
+
+
 _CANONICAL = [
     "N1","N2","N3","N4",
     "S1","S2","S3","S4",
@@ -102,8 +117,8 @@ ZONE_EXPANSION: Dict[str, List[str]] = {
     "SOUTH":        ["S1","S2","S3","S4"],
     "E":            ["E1","E2"],
     "EAST":         ["E1","E2"],
-    "W":            ["W1","W2"],
-    "WEST":         ["W1","W2"],
+    "W":            ["W1","W2","W3"],
+    "WEST":         ["W1","W2","W3"],
     "C":            ["C1","C2"],
     "CENTRAL":      ["C1","C2"],
     "NE":           ["NE1","NE2"],
@@ -250,6 +265,12 @@ _COD_NAMES = {
 _STATE_NAMES = {
     "state", "state code", "statecode", "state_code", "st",
     "state name",
+}
+
+# Exact-match only — "city" must win over substring-matches like "hub city"
+# (a hub-lookup column, not the per-pincode city the row actually serves).
+_CITY_NAMES = {
+    "city", "city name", "district", "district name", "town", "place",
 }
 
 # ODA positive-value strings (explicit ODA column)
@@ -539,6 +560,15 @@ COMPANY_MAP = {
     "transporter":        "name",
     "transporter name":   "name",
     "name":               "name",
+    "vendor code":        "vendorCode",
+    "vendor_code":        "vendorCode",
+    "vendor id":          "vendorCode",
+    "vendor no":          "vendorCode",
+    "carrier code":       "vendorCode",
+    "origin city":        "city",
+    "origin":             "city",
+    "hub city":           "city",
+    "hub":                "city",
     "gst":                "gstNo",
     "gst no":             "gstNo",
     "gst number":         "gstNo",
@@ -794,8 +824,20 @@ def _parse_vf_from_row(row: List, start_col: int = 1) -> Dict:
     if m_kg:
         return {"v": float(m_kg.group(1)), "f": float(m_kg.group(2).replace(',', ''))}
 
+    # Pattern: "X% <description...> + Rs. Y <description...>" — compound
+    # percent-PLUS-flat charges, e.g. ROV/FOV "0.1% on invoice value + Rs. 100
+    # flat". Distinct from "X% or Rs Y" (a choice between two alternatives):
+    # here both components apply together, joined by "+". Must be tried before
+    # the tighter "or/of" pattern below, which can't span the descriptive text.
+    m_compound = re.search(
+        r'(\d+(?:\.\d+)?)\s*%.*?\+\s*(?:rs\.?|inr\.?|₹)\s*(\d+(?:\.\d+)?)',
+        full_text, re.IGNORECASE
+    )
+    if m_compound:
+        return {"v": float(m_compound.group(1)), "f": float(m_compound.group(2))}
+
     # Pattern: "X% or Rs Y" or "X% / Rs Y"
-    m = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:or|/|,)?\s*(?:rs|inr|₹)?\s*(\d+(?:\.\d+)?)',
+    m = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:or|/|,)?\s*(?:rs\.?|inr\.?|₹)?\s*(\d+(?:\.\d+)?)',
                   full_text, re.IGNORECASE)
     if m:
         return {"v": float(m.group(1)), "f": float(m.group(2))}
@@ -808,8 +850,11 @@ def _parse_vf_from_row(row: List, start_col: int = 1) -> Dict:
             v_val = float(m_pct.group(1))
             continue
 
-        # "Rs 990" or "₹990" or "990 minimum"
-        m_rs = re.search(r'(?:rs|inr|₹)\s*(\d+(?:\.\d+)?)', cell, re.IGNORECASE)
+        # "Rs 990", "Rs. 990", "₹990" or "990 minimum" — allow an optional "."
+        # after "rs"/"inr" so "Rs. 100" (a very common Indian-currency style)
+        # isn't missed (the "." sits between the abbreviation and the number,
+        # where a bare \s* can't match it).
+        m_rs = re.search(r'(?:rs|inr|₹)\.?\s*(\d+(?:\.\d+)?)', cell, re.IGNORECASE)
         if m_rs and f_val is None:
             f_val = float(m_rs.group(1))
             continue
@@ -1054,6 +1099,23 @@ class ExcelParser(BaseParser):
                         for zone, pins in pinlist["zone_pincodes"].items():
                             detected["zone_pincodes"].setdefault(zone, [])
                             detected["zone_pincodes"][zone].extend(pins)
+                    if pinlist.get("pincode_geo_hints"):
+                        detected.setdefault("pincode_geo_hints", {})
+                        detected["pincode_geo_hints"].update(pinlist["pincode_geo_hints"])
+                    # If the sheet name indicates a dedicated ODA sheet and no ODA
+                    # column was found in the rows, treat all pincodes as ODA.
+                    # (e.g. a sheet named "ODA Pincodes" lists only ODA pincodes
+                    # with no flag column because the sheet itself is the flag.)
+                    _ODA_SHEET_KW = (
+                        "oda", "out of delivery", "out_of_delivery", "edl",
+                        "special zone", "special area", "remote area",
+                        "non serviceable", "non-serviceable",
+                    )
+                    _sn = sheet_name.lower()
+                    if not pinlist["oda"] and any(kw in _sn for kw in _ODA_SHEET_KW):
+                        detected["oda_pincodes"].extend(pinlist["served"])
+                        print(f"[Excel:{sheet_name}] ODA sheet by name — "
+                              f"{len(pinlist['served'])} pincodes added to oda_pincodes")
                     classified_as.append(
                         f"SERVICEABILITY ({len(pinlist['served'])} pincodes, "
                         f"{len(pinlist['oda'])} ODA)"
@@ -1090,16 +1152,39 @@ class ExcelParser(BaseParser):
             except Exception as _se:
                 pass  # segmenter is best-effort
 
-            charges = self._try_parse_charges(charge_rows_to_parse, sheet_name)
+            # Structural guard: a sheet that IS a zone-rate matrix or a
+            # hub↔zone lookup/key table is, by definition, not a charges
+            # table — its cells are rate-matrix numbers or hub codes/labels,
+            # never named charge amounts. Running charge extraction on it is
+            # exactly what let hub codes ("DEL"/"COK"/"BLR"/"CHD"/"PAT") get
+            # fuzzy-matched as charge-field names and rate-matrix cell values
+            # get injected as docket/ODA/COD charge amounts. Skip entirely —
+            # defense in depth on top of the matcher-level length-guard and
+            # confidence-consistency fixes (see smart_matcher._lookup).
+            is_matrix_sheet = (
+                any("MATRIX" in c for c in classified_as)
+                or _is_hub_key_sheet(sheet_name)
+            )
+            if is_matrix_sheet:
+                print(f"[Excel:{sheet_name}]   Skipping charge extraction — "
+                      f"sheet is a rate-matrix/hub-key lookup table "
+                      f"({classified_as})")
+                charges = {}
+            else:
+                charges = self._try_parse_charges(charge_rows_to_parse, sheet_name)
             if charges:
                 detected.setdefault("charges", {})
-                # Merge: {v,f} dicts take priority over scalars already found
+                # Merge by richness — a flat {v,f} scalar from one table must
+                # not clobber a structured matrix/band table found in another
+                # (e.g. "ODA Charges: Rs 2/kg" row vs. a full distance×weight
+                # ODA surcharge matrix were both being detected, and the plain
+                # scalar — found first — was silently keeping the richer matrix
+                # out because neither merge branch handled dict-vs-dict).
+                from knowledge.charge_richness import charge_richness as _cr
                 for k, v in charges.items():
                     existing = detected["charges"].get(k)
-                    if existing is None:
+                    if existing is None or _cr(v) > _cr(existing):
                         detected["charges"][k] = v
-                    elif isinstance(v, dict) and not isinstance(existing, dict):
-                        detected["charges"][k] = v  # dict wins over scalar
                 classified_as.append(f"CHARGES ({list(charges.keys())})")
 
             # 4. Company info (only if nothing else was found or sheet has few rows)
@@ -1310,12 +1395,9 @@ class ExcelParser(BaseParser):
         Empty dict if no hub key sheet is found.
         """
         _CANONICAL_SET = set(_CANONICAL)
-        HUB_SHEET_KEYWORDS = ('hub city key', 'hub zone map', 'hub zone key',
-                               'zone key', 'hub key', 'hub map')
 
         for sheet_name, rows in sheets.items():
-            name_lower = sheet_name.lower().strip()
-            if not any(kw in name_lower for kw in HUB_SHEET_KEYWORDS):
+            if not _is_hub_key_sheet(sheet_name):
                 continue
             if not rows:
                 continue
@@ -1609,11 +1691,12 @@ class ExcelParser(BaseParser):
         pin_col = None
         zone_col = None
         delivery_col = None   # Y=served, N=ODA
-        oda_col = None        # explicit ODA (Y=ODA, N=not ODA — reversed polarity)
-        oda_flag_col = None   # same as oda_col but detected from column name
+        oda_cols = []         # explicit ODA (Y=ODA, N=not ODA — reversed polarity)
+        oda_flag_cols = []    # same as oda_col but detected from column name
         pickup_col = None
         cod_col = None
         state_col = None
+        city_col = None
 
         # Expanded set of pincode header names
         _PIN_HEADER_EXACT = {
@@ -1655,12 +1738,12 @@ class ExcelParser(BaseParser):
                         delivery_col = ci
                         print(f"[Excel:{sheet_name}] Delivery col: {ci} ('{h}')")
                     elif h in _ODA_FLAG_NAMES or any(n == h for n in _ODA_FLAG_NAMES):
-                        oda_flag_col = ci
+                        oda_flag_cols.append(ci)
                         print(f"[Excel:{sheet_name}] ODA-flag col: {ci} ('{h}') — Y=ODA")
                     elif any(kw in h for kw in ("oda", "edl", "out of delivery", "non serviceable",
                                                  "non-serviceable", "special area", "remote")):
-                        if oda_col is None and oda_flag_col is None:
-                            oda_col = ci
+                        if ci not in oda_flag_cols:
+                            oda_cols.append(ci)
                             print(f"[Excel:{sheet_name}] ODA col: {ci} ('{h}')")
                     elif h in _PICKUP_NAMES:
                         pickup_col = ci
@@ -1668,6 +1751,8 @@ class ExcelParser(BaseParser):
                         cod_col = ci
                     elif h in _STATE_NAMES:
                         state_col = ci
+                    elif h in _CITY_NAMES:
+                        city_col = ci
                     if ("zone" in h) and zone_col is None and ci != pin_col:
                         zone_col = ci
                         print(f"[Excel:{sheet_name}] Zone col: {ci} ('{h}')")
@@ -1678,7 +1763,7 @@ class ExcelParser(BaseParser):
                 # If a category column was found, scan a sample of rows to see if it
                 # contains ODA values (e.g. "ODA A", "ODA B", "ODA C", "ODA D").
                 # V Express and several other transporters use this format.
-                if _category_col is not None and oda_col is None and oda_flag_col is None:
+                if _category_col is not None and not oda_cols and not oda_flag_cols:
                     sample_cats = set()
                     # Scan up to 300 rows — category files may have many STD rows
                     # (e.g. all Delhi pincodes first) before ODA ones appear
@@ -1688,7 +1773,7 @@ class ExcelParser(BaseParser):
                             if v and v not in ("NAN", "NONE", "NULL", ""):
                                 sample_cats.add(v)
                     if any(c.startswith("ODA") for c in sample_cats):
-                        oda_col = _category_col
+                        oda_cols.append(_category_col)
                         print(f"[Excel:{sheet_name}] ODA via CATEGORY col {_category_col} "
                               f"(values: {sorted(sample_cats)[:8]})")
                 break
@@ -1728,11 +1813,18 @@ class ExcelParser(BaseParser):
         served: List[int] = []
         oda: List[int] = []
         zone_pincodes: Dict[str, List[int]] = {}
+        # Raw (unnormalised) per-pincode city/state as the source itself wrote
+        # them — used downstream as a fallback when a pincode is absent from
+        # our master pincodes.json (see ZoneMapper.build_serviceability /
+        # knowledge.geo_overrides). Captured here, faithfully, with zero
+        # cleanup — normalisation policy is centralised at the promotion site
+        # so it can evolve without touching every parser.
+        geo_hints: Dict[int, Tuple[str, str]] = {}
         skipped = 0
 
         has_delivery_col = delivery_col is not None
-        has_any_oda_indicator = (oda_col is not None or
-                                  oda_flag_col is not None or
+        has_any_oda_indicator = (len(oda_cols) > 0 or
+                                  len(oda_flag_cols) > 0 or
                                   has_delivery_col)
 
         for row in rows[data_start:]:
@@ -1756,24 +1848,26 @@ class ExcelParser(BaseParser):
 
             # --- Explicit ODA positive flag column (checked FIRST — highest authority) ---
             explicit_oda_found = False
-            if oda_col is not None and oda_col < len(row):
-                oda_raw = _cell_str(row[oda_col]).strip().lower()
-                if oda_raw in ODA_POSITIVE or oda_raw in ODA_UNICODE:
-                    is_oda = True
-                    explicit_oda_found = True
-                elif oda_raw.startswith("oda"):   # "ODA A", "ODA-B", etc.
-                    is_oda = True
-                    explicit_oda_found = True
+            for col_idx in oda_cols:
+                if col_idx < len(row):
+                    oda_raw = _cell_str(row[col_idx]).strip().lower()
+                    if oda_raw in ODA_POSITIVE or oda_raw in ODA_UNICODE or oda_raw.startswith("oda"):
+                        is_oda = True
+                        explicit_oda_found = True
+                        break
 
-            if oda_flag_col is not None and oda_flag_col < len(row):
-                oda_raw = _cell_str(row[oda_flag_col]).strip()
-                oda_upper = oda_raw.upper()
-                oda_lower = oda_raw.lower()
-                if (oda_upper in ("Y", "YES", "TRUE", "1", "X") or
-                        oda_lower in ODA_POSITIVE or oda_raw in ODA_UNICODE or
-                        oda_lower.startswith("oda")):
-                    is_oda = True
-                    explicit_oda_found = True
+            if not is_oda:
+                for col_idx in oda_flag_cols:
+                    if col_idx < len(row):
+                        oda_raw = _cell_str(row[col_idx]).strip()
+                        oda_upper = oda_raw.upper()
+                        oda_lower = oda_raw.lower()
+                        if (oda_upper in ("Y", "YES", "TRUE", "1", "X") or
+                                oda_lower in ODA_POSITIVE or oda_raw in ODA_UNICODE or
+                                oda_lower.startswith("oda")):
+                            is_oda = True
+                            explicit_oda_found = True
+                            break
 
             # --- Delivery column ---
             # Three possible states:
@@ -1804,6 +1898,14 @@ class ExcelParser(BaseParser):
             if is_oda:
                 oda.append(pin)
 
+            # Capture the source's own city/state for this pincode, raw —
+            # see geo_hints comment above for why and how it's used.
+            if city_col is not None and state_col is not None:
+                _city_raw = _cell_str(row[city_col]).strip() if city_col < len(row) else ""
+                _state_raw = _cell_str(row[state_col]).strip() if state_col < len(row) else ""
+                if _city_raw and _state_raw:
+                    geo_hints[pin] = (_city_raw, _state_raw)
+
             # Zone assignment
             if zone_col is not None and zone_col < len(row):
                 z_raw = _cell_str(row[zone_col]).strip().upper()
@@ -1819,7 +1921,7 @@ class ExcelParser(BaseParser):
 
         print(f"[Excel:{sheet_name}] Pincode parse: "
               f"{len(served)} served, {len(oda)} ODA, {skipped} skipped  "
-              f"[delivery_col={delivery_col}, oda_col={oda_col}]")
+              f"[delivery_col={delivery_col}, oda_cols={oda_cols}]")
 
         if zone_pincodes:
             for z, pins in list(zone_pincodes.items())[:5]:
@@ -1834,6 +1936,10 @@ class ExcelParser(BaseParser):
         result: Dict[str, Any] = {"served": served, "oda": oda}
         if zone_pincodes:
             result["zone_pincodes"] = zone_pincodes
+        if geo_hints:
+            result["pincode_geo_hints"] = geo_hints
+            print(f"[Excel:{sheet_name}]   Captured city/state hints for {len(geo_hints)} pincodes "
+                  f"(city_col={city_col}, state_col={state_col})")
         return result
 
     # ------------------------------------------------------------------
@@ -1896,15 +2002,26 @@ class ExcelParser(BaseParser):
                 print(f"[Excel:{sheet_name}]   ODA weight bands: "
                       f"{len(oda_bands.get('bands', []))} weight bands")
 
+        # Once an ODA distance×weight matrix has claimed this sheet's rows,
+        # the OTHER structured-table detectors must not also run on them —
+        # e.g. an ODA matrix row like "Up to 25 Km | NIL | NIL | NIL | Same day"
+        # gets misread by _try_parse_weight_slab as a weight-slab header whose
+        # zone columns are literally named "NIL" (it matches the bare-letters
+        # zone-token regex), fabricating a phantom `weightSlabRates` field that
+        # doesn't exist in the source. One claimed table per row-range.
+        oda_claimed_sheet = bool(oda_matrix)
+
         # Per-box / per-carton handling charge detection
-        per_box = self._try_parse_per_box_handling(rows, sheet_name)
-        if per_box:
-            charges["handlingCharges"] = per_box
+        if not oda_claimed_sheet:
+            per_box = self._try_parse_per_box_handling(rows, sheet_name)
+            if per_box:
+                charges["handlingCharges"] = per_box
 
         # Weight-slab pricing table (zone-wise rates per weight band)
-        weight_slab = self._try_parse_weight_slab(rows, sheet_name)
-        if weight_slab:
-            charges["weightSlabRates"] = weight_slab
+        if not oda_claimed_sheet:
+            weight_slab = self._try_parse_weight_slab(rows, sheet_name)
+            if weight_slab:
+                charges["weightSlabRates"] = weight_slab
 
         # ── Horizontal table detection (TCI-style: labels in row N, values in row N+1)
         # Scans first 6 rows to find a header row with 3+ charge keywords followed
@@ -1949,6 +2066,12 @@ class ExcelParser(BaseParser):
             non_empty = [_cell_str(c) for c in row if _cell_str(c)]
             if len(non_empty) == 1:
                 inline = non_empty[0]
+                # Pipe-separated compound title rows (zone matrix headers like
+                # "Vendor | Origin: City (Z1) | ... | Rates before fuel surcharge")
+                # are never genuine inline charge text — skip them entirely so we
+                # don't extract phantom values like fuel=2.0 from zone annotations.
+                if '|' in inline:
+                    continue
                 inline_charges = self._parse_inline_charge_text(inline, sheet_name)
                 for k, v in inline_charges.items():
                     existing = charges.get(k)
@@ -1997,7 +2120,7 @@ class ExcelParser(BaseParser):
                     sm = _get_sm()
                     if sm:
                         r = sm.match_charge(key, min_confidence=0.65)
-                        if r.value is not None or r.method != "none":
+                        if r.value is not None and r.confidence >= 0.65:
                             mapped_key = r.value
                             if r.method not in ("exact", "none"):
                                 print(f"[Excel:{sheet_name}]   Smart charge match: '{key}' "
@@ -2009,10 +2132,12 @@ class ExcelParser(BaseParser):
                 if mapped_key is None:
                     continue  # explicitly mapped to None = skip this row
 
-                # Skip if this is the ODA bands key and we already have bands
+                # Skip if we already have a richer ODA structure — protect
+                # distance_weight_matrix ("matrix" key) and weight_bands
+                # ("bands" key) from being overwritten by a flat scalar.
                 if mapped_key == "odaCharges" and isinstance(charges.get("odaCharges"), dict):
-                    # Only override if the existing is bands
-                    if "bands" in charges.get("odaCharges", {}):
+                    existing_oda = charges["odaCharges"]
+                    if "bands" in existing_oda or "matrix" in existing_oda:
                         continue
 
                 # Collect all non-empty cells to the right of key_col
@@ -2168,7 +2293,7 @@ class ExcelParser(BaseParser):
                 label_part = re.split(r'[-:–\d]', text)[0].strip()
                 if len(label_part) >= 3:
                     r = sm.match_charge(label_part, min_confidence=0.68)
-                    if r.value is not None:
+                    if r.value is not None and r.confidence >= 0.68:
                         fc4_key = r.value
                         if r.method != "exact":
                             print(f"[Excel:{sheet_name}]   Smart inline match: '{label_part}' "
@@ -2297,30 +2422,68 @@ class ExcelParser(BaseParser):
                 continue
 
             dist_lower_str = dist_raw.lower()
-            if "up to" in dist_lower_str or "upto" in dist_lower_str or len(dist_nums) == 1:
-                min_dist = 0
-                max_dist = int(dist_nums[0])
-            elif "above" in dist_lower_str or ">" in dist_raw or "beyond" in dist_lower_str:
+            # ">"/"above"/"beyond" must be checked before the single-number
+            # "up to" fallback — "> 300 Km" also has exactly one number, but
+            # means "everything past 300", not "0 to 300".
+            if "above" in dist_lower_str or ">" in dist_raw or "beyond" in dist_lower_str:
                 min_dist = int(dist_nums[0])
                 max_dist = None
+            elif "up to" in dist_lower_str or "upto" in dist_lower_str or len(dist_nums) == 1:
+                min_dist = 0
+                max_dist = int(dist_nums[0])
             else:
                 min_dist = int(dist_nums[0])
                 max_dist = int(dist_nums[1]) if len(dist_nums) >= 2 else None
 
+            # Word tables dedupe runs of identical adjacent cells (merged-cell
+            # artefact) — a row like ['>300 Km', 'Negotiable', 'Negotiable',
+            # 'Negotiable', '+4 Days'] collapses to 3 cells, shifting the
+            # transit-time text into a weight-band column and misreading it as
+            # a charge. Detect a placeholder value spanning the row (fewer
+            # cells than the header implies) and apply it uniformly instead of
+            # reading by raw column index.
+            _PLACEHOLDER_RE = re.compile(
+                r'(?i)\bnegotiable\b|\bon\s*request\b|\bcontact\b|\btbd\b|\bquote\b|\bvaries\b|\bcall\s*for\b'
+            )
+            row_is_short = len(row) < (max(ci for ci, _, _ in weight_cols) + 1)
+            placeholder_match = None
+            if row_is_short:
+                for cell in row[dist_col + 1:]:
+                    if _PLACEHOLDER_RE.search(_cell_str(cell)):
+                        placeholder_match = _cell_str(cell).strip()
+                        break
+
             # Read charge for each weight column
             bands = []
             for ci, min_kg, max_kg in weight_cols:
-                if ci >= len(row):
-                    continue
-                charge_raw = _cell_str(row[ci]).strip().upper()
-                if charge_raw in ("NIL", "NA", "N/A", "-", "", "FREE"):
+                note = None
+                if placeholder_match is not None:
                     charge = 0
+                    note = placeholder_match
+                elif ci >= len(row):
+                    continue
                 else:
-                    charge = _safe_float(row[ci]) or 0
+                    charge_raw_str = _cell_str(row[ci]).strip()
+                    charge_raw = charge_raw_str.upper()
+                    if charge_raw in ("NIL", "NA", "N/A", "-", "", "FREE"):
+                        charge = 0
+                    elif _PLACEHOLDER_RE.search(charge_raw):
+                        # "Negotiable"/"On request"/etc — the source has no
+                        # numeric rate here. Recording 0 alone would fabricate
+                        # a value that doesn't exist; keep the 0 as a numeric
+                        # placeholder for schema compatibility but preserve
+                        # the source's own wording in `note` so downstream
+                        # consumers can tell "not priced" from "free".
+                        charge = 0
+                        note = charge_raw_str
+                    else:
+                        charge = _safe_float(row[ci]) or 0
 
                 band: Dict = {"minKg": min_kg, "charge": float(charge)}
                 if max_kg is not None:
                     band["maxKg"] = max_kg
+                if note is not None:
+                    band["note"] = note
                 bands.append(band)
 
             if bands:
@@ -2742,6 +2905,53 @@ class ExcelParser(BaseParser):
     ) -> Optional[Dict]:
         company: Dict[str, str] = {}
 
+        # Pre-scan: look for compound title cells (e.g. "Name | Vendor Code: FFBF | ...")
+        # and standalone title rows (col 0 = company name, all other cols empty) in the
+        # first 5 rows of the sheet. These carry company identity in a non-key-value layout.
+        _CHARGE_KEYWORDS = re.compile(
+            r'\b(rate|charge|freight|surcharge|oda|fuel|gst|tax|per\s*kg|minimum|slab|'
+            r'basic|zone|weight|transit|pickup|delivery|docket|consignment|insurance|rov|fov)\b',
+            re.I
+        )
+        _PLACEHOLDER = re.compile(r'^[-–—na/]+$', re.I)
+        for row in rows[:5]:
+            cells = [_cell_str(c) for c in row]
+            non_empty = [c for c in cells if c]
+            if not non_empty:
+                continue
+            first_cell = non_empty[0]
+            # Case A: pipe-separated compound title ("Name | Key: Value | ...")
+            if '|' in first_cell and len(non_empty) == 1:
+                segments = [s.strip() for s in first_cell.split('|') if s.strip()]
+                for seg in segments:
+                    # "Key: Value" pattern within the segment
+                    if ':' in seg:
+                        k_raw, _, v_raw = seg.partition(':')
+                        k = k_raw.strip().lower()
+                        v = v_raw.strip()
+                        if v and not _PLACEHOLDER.match(v):
+                            for pat, mk in COMPANY_MAP.items():
+                                if pat == k:
+                                    # Strip trailing zone-code annotation
+                                    # e.g. "New Delhi (N1)" → "New Delhi"
+                                    if mk == 'city':
+                                        v = re.sub(r'\s*\([A-Z][A-Z0-9]{0,3}\)\s*$', '', v).strip()
+                                    company.setdefault(mk, v)
+                                    break
+                    else:
+                        # Bare segment with no colon → treat as company name if it
+                        # looks like a name (no charge keywords, not a number, >= 4 chars)
+                        if (not _CHARGE_KEYWORDS.search(seg) and len(seg) >= 4
+                                and not seg[0].isdigit() and 'name' not in company):
+                            company.setdefault('name', seg)
+            # Case B: standalone title row (col 0 non-empty, rest empty)
+            elif (len(non_empty) == 1 and first_cell and len(first_cell) >= 4
+                    and not first_cell[0].isdigit()
+                    and not _CHARGE_KEYWORDS.search(first_cell)
+                    and not _PLACEHOLDER.match(first_cell)
+                    and 'name' not in company):
+                company.setdefault('name', first_cell)
+
         sm = _get_sm()
         for row in rows:
             if len(row) < 2:
@@ -2761,7 +2971,7 @@ class ExcelParser(BaseParser):
             # Layer 2: SmartMatcher
             if mapped_key is None and sm:
                 r = sm.match_company_field(key, min_confidence=0.7)
-                if r.value:
+                if r.value and r.confidence >= 0.7:
                     mapped_key = r.value
                     if r.method != "exact":
                         print(f"[Excel:{sheet_name}]   Smart company match: '{key}' "
@@ -2778,6 +2988,9 @@ class ExcelParser(BaseParser):
                     val = clean    # store normalized (no spaces)
                 company[mapped_key] = val
 
+        if len(company) >= 1 and 'name' in company:
+            print(f"[Excel:{sheet_name}] Company fields: {list(company.keys())}")
+            return company
         if len(company) >= 2:
             print(f"[Excel:{sheet_name}] Company fields: {list(company.keys())}")
             return company

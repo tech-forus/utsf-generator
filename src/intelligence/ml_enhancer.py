@@ -280,12 +280,13 @@ class ZoneDistancePredictor:
         
         # Apply ML formula: base_rate × distance_factor × economic_factor
         predicted_rate = base_rate * distance_multiplier * economic_multiplier
-        
-        # Add some randomness for realism (±5%)
-        import random
-        variation = random.uniform(0.95, 1.05)
-        
-        return round(predicted_rate * variation, 1)
+
+        # NOTE: Do NOT inject random variance here. A randomised "for realism"
+        # multiplier turns a rough geographic estimate into a number that looks
+        # like a real extracted rate — that's fabrication, not enhancement.
+        # Callers must treat this as a low-confidence estimate (see confidence
+        # scoring) and never persist it as a verified rate without user review.
+        return round(predicted_rate, 1)
 
 class ContactInfoPredictor:
     """ML-powered contact information prediction."""
@@ -499,35 +500,11 @@ class AdvancedUTSFEnhancer:
         return best_match
     
     def _enhance_gst_ml(self, data: Dict) -> Optional[Dict]:
-        """ML-powered GST number enhancement."""
-        company = data.get("company_details", {})
-        
-        if company.get("gstNo"):
-            return None  # Already has GST
-        
-        # Infer state from address/city
-        city = company.get("city", "")
-        state = company.get("state", "")
-        address = company.get("address", "")
-        
-        location_text = f"{city} {state} {address}".lower()
-        
-        # Match state patterns
-        for state_key, pattern in self.ml_classifier.gst_patterns.items():
-            if state_key in location_text:
-                # Generate GST number for this state
-                gst_number = self._generate_gst_for_state(pattern["prefix"])
-                return {
-                    "type": "gst_ml",
-                    "confidence": pattern["confidence"],
-                    "data": {
-                        "company_details": {
-                            **company,
-                            "gstNo": gst_number
-                        }
-                    }
-                }
-        
+        """GST enhancement — only uses data actually present in source documents.
+        Fabricating a random GST number from inferred state is prohibited (it would
+        produce a plausible-looking but completely wrong registration number). If the
+        source doesn't have a GST number, the field must stay null.
+        """
         return None
     
     def _generate_gst_for_state(self, state_prefix: str) -> str:
@@ -554,52 +531,31 @@ class AdvancedUTSFEnhancer:
         return f"{state_prefix}{pan_part}{reg_number}{check_char}1"
     
     def _enhance_contact_ml(self, data: Dict) -> Optional[Dict]:
-        """ML-powered contact information enhancement."""
-        company = data.get("company_details", {})
-        updates = {}
-        confidence = 0.0
-        enhancements = []
-        
-        # Phone prediction
-        if not company.get("phone") and not company.get("contactPhone"):
-            city = company.get("city", "")
-            predicted_phone = self.ml_classifier.contact_predictor.predict_phone(city, company.get("name", ""))
-            if predicted_phone:
-                updates["phone"] = predicted_phone
-                updates["contactPhone"] = predicted_phone
-                enhancements.append("phone")
-                confidence += 0.8
-        
-        # Email prediction
-        if not company.get("email") and not company.get("contactEmail"):
-            company_name = company.get("name", "")
-            predicted_email = self.ml_classifier.contact_predictor.predict_email(company_name, "logistics")
-            if predicted_email:
-                updates["email"] = predicted_email
-                updates["contactEmail"] = predicted_email
-                enhancements.append("email")
-                confidence += 0.7
-        
-        if updates:
-            return {
-                "type": "contact_ml",
-                "confidence": confidence / len(enhancements),
-                "data": {
-                    "company_details": {
-                        **company,
-                        **updates
-                    }
-                }
-            }
-        
+        """Contact info enhancement — fabricating phone/email from city/name patterns
+        violates the zero-fabrication policy: the generated values have no connection
+        to the transporter's actual contact details. If the source doesn't contain
+        phone/email, the fields must stay null.
+        """
         return None
 
     def _enhance_charges_ml(self, data: Dict, folder_name: str = "") -> Optional[Dict]:
         """
-        ML-powered charges enhancement.
-        For recognised transporters, fills in any missing pricing fields using
-        industry-standard defaults stored in the company pattern.
-        Only fills fields that are truly absent (never overwrites real data).
+        Charges review-flagging (NOT a value generator).
+
+        This used to silently inject "industry-standard default" numbers into
+        any charge field the parser couldn't find — which meant a number nobody
+        ever extracted from the source document became indistinguishable from a
+        real, verified rate once saved. That's precisely the class of bug that
+        produced fabricated charges (e.g. ROV/ODA/docket values that don't match
+        the source PDF/DOCX at all).
+
+        Long-term fix: never write a guessed number into `charges`. Instead,
+        record each missing field as a *suggestion* — clearly labelled as an
+        industry-default guess, with its source — under
+        `_chargeReviewSuggestions`, so the UI can ask the user to pick between
+        "use this suggested value", "enter the real value from the rate card",
+        or "leave blank" before anything is trusted as fact. `charges` itself
+        is left untouched: missing stays missing.
         """
         charges = data.get("charges") or {}
 
@@ -609,39 +565,41 @@ class AdvancedUTSFEnhancer:
         confidence     = classification.get("confidence", 0.0)
 
         if not company_key or confidence < 0.65:
-            return None  # Not confident enough to inject defaults
+            return None  # Not confident enough to suggest anything
 
-        pattern       = self.ml_classifier.company_patterns.get(company_key, {})
-        default_ch    = pattern.get("default_charges", {})
+        pattern    = self.ml_classifier.company_patterns.get(company_key, {})
+        default_ch = pattern.get("default_charges", {})
         if not default_ch:
-            return None  # This company has no default charge data
+            return None  # No reference charge data for this company
 
         # Fields the quality scorer cares about (see fc4_schema.calculate_data_quality)
         SCORED_FIELDS = {"fuel", "docketCharges", "minCharges", "rovCharges", "odaCharges"}
 
-        updates   = {}
-        filled    = []
-
-        for field, default_val in default_ch.items():
+        suggestions = []
+        for field, suggested_val in default_ch.items():
             existing = charges.get(field)
-            # Only fill if the field is truly missing or zero
             if existing is None or existing == 0 or existing == {}:
-                updates[field] = default_val
-                if field in SCORED_FIELDS:
-                    filled.append(field)
+                suggestions.append({
+                    "field": field,
+                    "missingInSource": True,
+                    "suggestedValue": suggested_val,
+                    "suggestionSource": f"industry_default:{company_key}",
+                    "scored": field in SCORED_FIELDS,
+                })
 
-        if not updates:
-            return None  # Nothing to fill
+        if not suggestions:
+            return None  # Nothing missing — nothing to ask the user about
 
-        print(f"[ML Charges] Filling {len(updates)} charge defaults for "
-              f"{pattern.get('canonical_name', company_key)} "
-              f"(confidence={confidence:.2f}): {list(updates.keys())}")
+        print(f"[ML Charges] {len(suggestions)} charge field(s) missing for "
+              f"{pattern.get('canonical_name', company_key)} — flagged for user "
+              f"review instead of auto-filling: {[s['field'] for s in suggestions]}")
 
         return {
-            "type":       "charges_ml",
-            "confidence": min(0.80, confidence),  # caps at 0.80 — these are defaults
+            "type":       "charges_review_flagged",
+            "confidence": min(0.80, confidence),
             "data": {
-                "charges": {**charges, **updates}
+                # `charges` is intentionally absent here — we do not touch it.
+                "_chargeReviewSuggestions": data.get("_chargeReviewSuggestions", []) + suggestions
             }
         }
 
@@ -708,47 +666,53 @@ class AdvancedUTSFEnhancer:
         return 8.0  # Default base rate
     
     def _enhance_business_logic_ml(self, data: Dict) -> Optional[Dict]:
-        """ML-powered business logic enhancement."""
+        """
+        Business-logic flagging (NOT a verification generator).
+
+        This used to set `isVerified` / `chargesVerified` / `approvalStatus`
+        / `rating` directly from a "completeness" score — i.e. how many
+        fields happened to be filled in (including by other fabrication
+        steps), not whether the data is actually correct. That conflation
+        is how vendors ended up marked "approved" and "chargesVerified: true"
+        in the DB despite charges that don't match their source documents at
+        all.
+
+        Long-term fix: a parser can measure completeness, but it cannot
+        measure correctness — only a human (or an external verification
+        source, e.g. a GST registry lookup) can do that. So we never set
+        these trust fields to true/approved here. We only ever (a) leave
+        them alone if already present, or (b) explicitly mark the record as
+        requiring review, with the completeness score attached as context
+        for whoever reviews it.
+        """
         company = data.get("company_details", {})
-        updates = {}
-        confidence = 0.0
-        
-        # Predict verification status based on data completeness
         completeness = self._calculate_ml_completeness(data)
-        if completeness > 0.8:
-            updates["isVerified"] = True
-            updates["chargesVerified"] = True
-            updates["approvalStatus"] = "approved"
-            confidence = 0.9
-        elif completeness > 0.6:
+
+        updates = {}
+        # Only ever move *toward* "needs review", never fabricate "verified".
+        if not company.get("isVerified"):
             updates["isVerified"] = False
+        if not company.get("chargesVerified"):
             updates["chargesVerified"] = False
-            updates["approvalStatus"] = "pending"
-            confidence = 0.7
-        
-        # Predict rating based on data quality
-        if completeness > 0.9:
-            updates["rating"] = 4.5
-        elif completeness > 0.8:
-            updates["rating"] = 4.2
-        elif completeness > 0.6:
-            updates["rating"] = 3.8
-        else:
-            updates["rating"] = 3.5
-        
-        if updates:
-            return {
-                "type": "business_logic_ml",
-                "confidence": confidence,
-                "data": {
-                    "company_details": {
-                        **company,
-                        **updates
-                    }
+        if not company.get("approvalStatus"):
+            updates["approvalStatus"] = "pending_review"
+        updates["needsManualReview"] = True
+        updates["_completenessAtGeneration"] = round(completeness, 2)
+
+        # Do not invent a star rating — leave it absent/null until the
+        # platform has real, earned ratings for this vendor.
+        company.pop("rating", None)
+
+        return {
+            "type": "business_logic_flagged",
+            "confidence": 0.95,  # high confidence that "needs review" is correct
+            "data": {
+                "company_details": {
+                    **company,
+                    **updates
                 }
             }
-        
-        return None
+        }
     
     def _calculate_ml_completeness(self, data: Dict) -> float:
         """ML-enhanced data completeness calculation."""

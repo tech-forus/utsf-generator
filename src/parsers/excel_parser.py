@@ -972,9 +972,10 @@ class ExcelParser(BaseParser):
         print(f"[ExcelParser] Parsing CSV: {fname}")
 
         rows = []
-        for enc in ("utf-8-sig", "utf-8", "latin-1"):
+        for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1", "ascii"):
             try:
-                with open(file_path, "r", encoding=enc) as f:
+                errors = "replace" if enc == "ascii" else "strict"
+                with open(file_path, "r", encoding=enc, errors=errors) as f:
                     delimiter = "\t" if file_path.endswith(".tsv") else ","
                     reader = csv.reader(f, delimiter=delimiter)
                     rows = [row for row in reader if any(c.strip() for c in row)]
@@ -996,6 +997,77 @@ class ExcelParser(BaseParser):
     # ------------------------------------------------------------------
     # Auto-detection dispatcher
     # ------------------------------------------------------------------
+
+    def _extract_comment_metadata(self, rows: List[List], sheet_name: str) -> Dict:
+        meta = {"company_details": {}, "charges": {}}
+        sm = _get_sm()
+        
+        for row in rows:
+            if not row or not _cell_str(row[0]).startswith("#"):
+                continue
+                
+            cells = [_cell_str(c).strip() for c in row if str(c).strip()]
+            if not cells:
+                continue
+                
+            if len(cells) < 2:
+                # Might be "# Key, Value" or "# Key: Value"
+                raw_cell = cells[0]
+                if ":" in raw_cell:
+                    parts = [p.strip() for p in raw_cell.split(":", 1)]
+                elif "," in raw_cell:
+                    parts = [p.strip() for p in raw_cell.split(",", 1)]
+                else:
+                    continue
+                if len(parts) >= 2 and parts[1]:
+                    k_raw, v_raw = parts[0], parts[1]
+                else:
+                    continue
+            else:
+                k_raw, v_raw = cells[0], cells[1]
+                
+            k = re.sub(r'^[#*•·→\-]+\s*', '', k_raw).lower().strip()
+            v = v_raw
+            
+            if not v or v.lower() in ("none", "null", "na", "n/a", "-"):
+                continue
+                
+            # Try company match
+            mapped_key = None
+            for pattern, mk in COMPANY_MAP.items():
+                if pattern == k:
+                    mapped_key = mk
+                    break
+                    
+            if mapped_key is None and sm:
+                r = sm.match_company_field(k, min_confidence=0.7)
+                if r.value and r.confidence >= 0.7:
+                    mapped_key = r.value
+                    
+            if mapped_key:
+                if mapped_key == "gstNo":
+                    clean = re.sub(r'\s+', '', v).upper()
+                    if re.match(r'^\d{2}[A-Z]{5}\d{4}[A-Z]\d[A-Z0-9]{2}$', clean):
+                        v = clean
+                    else:
+                        continue
+                meta["company_details"][mapped_key] = v
+                continue
+                
+            # Try charge match
+            if sm:
+                r = sm.match_charge(k, min_confidence=0.6)
+                if r.value and r.confidence >= 0.6:
+                    val_num = _safe_float(v)
+                    if val_num is not None:
+                        is_pct = "%" in v
+                        meta["charges"][r.value] = {"v": val_num, "f": 0.0} if is_pct else {"v": 0.0, "f": val_num}
+                        
+        if meta["company_details"] or meta["charges"]:
+            print(f"[Excel:{sheet_name}] Extracted comment metadata: "
+                  f"Company: {list(meta['company_details'].keys())}, "
+                  f"Charges: {list(meta['charges'].keys())}")
+        return meta
 
     def _auto_detect(self, sheets: Dict[str, List[List]]) -> Dict:
         """
@@ -1035,6 +1107,19 @@ class ExcelParser(BaseParser):
                 continue
 
             print(f"[Excel:{sheet_name}] Classifying ({len(rows)} rows) ...")
+            
+            # Extract comment metadata right away before classification
+            comment_meta = self._extract_comment_metadata(rows, sheet_name)
+            if comment_meta.get("company_details"):
+                detected.setdefault("company_details", {})
+                detected["company_details"].update(comment_meta["company_details"])
+            if comment_meta.get("charges"):
+                detected.setdefault("charges", {})
+                from knowledge.charge_richness import charge_richness as _cr
+                for k, v in comment_meta["charges"].items():
+                    existing = detected["charges"].get(k)
+                    if existing is None or _cr(v) > _cr(existing):
+                        detected["charges"][k] = v
 
             classified_as = []
 
@@ -1356,6 +1441,8 @@ class ExcelParser(BaseParser):
             raw_to   = _upper(row[to_col]).strip()   if len(row) > to_col   else ""
             rate     = _safe_float(row[rate_col])     if len(row) > rate_col else None
             if not raw_from or not raw_to or rate is None or rate <= 0:
+                if skipped < 5:
+                    print(f"[Excel:{sheet_name}]   LF Skip row: len={len(row)}, from='{raw_from}', to='{raw_to}', rate={rate} (row={row[:10]})")
                 skipped += 1
                 continue
             # Expand aliases (e.g. NORTH → [N1,N2,N3,N4]; W3 → [W3])
@@ -1453,6 +1540,15 @@ class ExcelParser(BaseParser):
         """
         if len(rows) < 3:
             return None
+
+        # Fix 6: Wide-format misclassification guard
+        # If this looks like a pincode serviceability sheet, skip zone matrix detection entirely
+        for ri in range(min(5, len(rows))):
+            row_text = " ".join(_cell_str(c).lower() for c in rows[ri][:15])
+            if any(kw in row_text for kw in ("pin", "pincode", "zip", "postal")):
+                # Specifically checking for pincode columns
+                print(f"[Excel:{sheet_name}] Pre-check: found pincode headers, skipping wide-format zone matrix detection.")
+                return None
 
         # RC-1 FIX: increased from 20 → 35 to catch multi-row headers deep in sheet
         scan_limit = min(35, len(rows))
@@ -2066,6 +2162,7 @@ class ExcelParser(BaseParser):
             non_empty = [_cell_str(c) for c in row if _cell_str(c)]
             if len(non_empty) == 1:
                 inline = non_empty[0]
+                inline = re.sub(r'^[#*•·→\-]+\s*', '', inline)
                 # Pipe-separated compound title rows (zone matrix headers like
                 # "Vendor | Origin: City (Z1) | ... | Rates before fuel surcharge")
                 # are never genuine inline charge text — skip them entirely so we
@@ -2092,9 +2189,8 @@ class ExcelParser(BaseParser):
                 key_candidates.append((1, _cell_str(row[1]).lower().strip()))
 
             for key_col, key in key_candidates:
-                # Skip metadata/comment rows (e.g. "# Company", "# GST No.")
-                if key.startswith('#'):
-                    continue
+                # Strip metadata/comment markers (e.g. "# Fuel Surcharge")
+                key = re.sub(r'^[#*•·→\-]+\s*', '', key)
                 val_start = key_col + 1
 
                 # Normalize key: collapse newlines and extra whitespace for matching
@@ -2957,6 +3053,7 @@ class ExcelParser(BaseParser):
             if len(row) < 2:
                 continue
             key = _cell_str(row[0]).lower().strip()
+            key = re.sub(r'^[#*•·→\-]+\s*', '', key)  # strip comment/bullet markers
             val = _cell_str(row[1]).strip()
             if not val or val.lower() in ("none", "null", "na", "n/a", "-"):
                 continue

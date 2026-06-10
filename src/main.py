@@ -222,7 +222,7 @@ def merge_extracted_data(pieces: List[Dict]) -> Dict:
                        "address","city","state","pincode","website","serviceType","transportMode",
                        "code","vendorCode","status","verified","isVerified","rating"}
     # Only fields the encoder actually reads from charges
-    _CHARGE_FIELDS  = {"fuel","docketCharges","odaCharges","rovCharges","minCharges",
+    _CHARGE_FIELDS  = {"fuel","docketCharges","odaCharges","odaMatrix","rovCharges","minCharges",
                        "fuelSurcharge","insuranceCharges","handlingCharges","codCharges",
                        "minWeight","volumetricDivisor","divisor","kFactor","greenTax",
                        "daccCharges","miscCharges","ewayCharges","topayCharges","dodCharges",
@@ -369,18 +369,6 @@ def _log_data_summary(label: str, data: Dict, folder: str):
     else:
         print(f"    -> data keys extracted: (none)")
 
-    from utsf_logger import utsf_logger
-    utsf_logger.log_stage(
-        "PARSER_ODA_EXTRACTED",
-        f"Extracted {len(op)} ODA pincodes from {label}",
-        {"count": len(op)}
-    )
-    utsf_logger.log_stage(
-        "PARSER_SERVED_EXTRACTED",
-        f"Extracted {len(sp)} served pincodes from {label}",
-        {"count": len(sp)}
-    )
-
 
 def _log_merged_summary(merged: Dict):
     """Print a summary of the merged data dict."""
@@ -498,9 +486,6 @@ def generate_utsf_for_transporter(
     Main generation pipeline for a single transporter.
     Returns path to generated UTSF file, or None on failure.
     """
-    from utsf_logger import utsf_logger
-    utsf_logger.init_logs()
-
     folder = os.path.join(TRANSPORTERS_DIR, transporter_name)
     if not os.path.exists(folder):
         print(f"[ERROR] Folder not found: {folder}")
@@ -574,12 +559,6 @@ def generate_utsf_for_transporter(
         ext    = os.path.splitext(file_path)[1].lower()
         subfolder = os.path.basename(os.path.dirname(file_path))
 
-        utsf_logger.log_stage(
-            "PARSER_START",
-            f"Starting parse for {rel}",
-            {"file_name": rel, "file_type": ext}
-        )
-
         print(f"\n  --- Parsing file {file_idx}/{len(files)}: {rel} "
               f"[subfolder={subfolder}] ---")
 
@@ -588,7 +567,6 @@ def generate_utsf_for_transporter(
                 data = parse_json_file(file_path)
                 data["_sourceFile"] = rel
                 extracted_pieces.append(data)
-                _log_data_summary(rel, data, folder)
                 # Log key-level summary for JSON
                 top_keys = list(data.keys())[:8]
                 print(f"    Parser: JSON (direct)")
@@ -862,16 +840,6 @@ def generate_utsf_for_transporter(
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     safe_name   = transporter_name.lower().replace(" ", "_").replace("/", "_")
     output_path = os.path.join(OUTPUT_DIR, f"{safe_name}.utsf.json")
-
-    from utsf_logger import utsf_logger
-    final_oda_count = utsf.get("stats", {}).get("totalOdaPincodes", 0)
-    utsf_logger.log_stage(
-        "UTSF_FINAL",
-        f"Completed UTSF encoding with {final_oda_count} ODA pincodes",
-        {"total_oda_pincodes": final_oda_count}
-    )
-    utsf["diagnosticLogs"] = utsf_logger.get_logs()
-
     encoder.save(utsf, output_path)
 
     quality = utsf.get("dataQuality", 0)

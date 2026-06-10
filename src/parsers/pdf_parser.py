@@ -116,7 +116,16 @@ _CHARGE_PATTERNS = [
     ("rovCharges_f",    rf"(?:r\.?o\.?v\.?|f\.?o\.?v\.?)\s*(?:min(?:imum)?)?{_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)"),
 
     # ── ODA ───────────────────────────────────────────────────────────────────
-    ("odaCharges_f",    rf"o\.?d\.?a\.?\s*(?:charges?)?{_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)\s*(?:per\s*(?:shipment|consignment|docket|kg))?"),
+    # Dual-rate "higher of": "Rs. X/Kg or Rs. Y/consignment (higher)" → per_kg_minimum
+    # Meaning: ODA = max(X × weight_in_kg, Y). Must match before the single-value patterns.
+    ("odaCharges_dual",
+     rf"o\.?d\.?a\.?\s*(?:charges?)?{_NL}"
+     rf"(?:rs\.?\s*|₹\s*)?(\d+(?:\.\d+)?)\s*/?\s*kg"
+     rf"[^\d\n]{{0,40}}"
+     rf"(?:rs\.?\s*|₹\s*)?(\d+(?:\.\d+)?)\s*/?\s*(?:consignment|shipment|docket)"
+     rf"[^\d\n]{{0,25}}(?:higher|max|whichever|greater)"),
+    # Single flat charge (per shipment) — negative lookahead prevents matching "/kg" lines
+    ("odaCharges_f",    rf"o\.?d\.?a\.?\s*(?:charges?)?{_NL}(?:rs\.?|₹)\s*(\d+(?:\.\d+)?)(?!\s*/?\s*kg)"),
     ("odaCharges_v",    rf"o\.?d\.?a\.?{_NL}(\d+(?:\.\d+)?)\s*%"),
     # Insurance
     ("insuranceCharges_v", rf"insurance{_NL}(\d+(?:\.\d+)?)\s*%"),
@@ -147,6 +156,13 @@ _COMPANY_PATTERNS = {
     "contactEmail": r'\b([\w.+-]+@[\w-]+\.[\w.]+)\b',
     "website":      r'\b((?:https?://)?(?:www\.)?[\w-]+\.(?:com|in|co\.in|net|org)(?:/[\w/.-]*)?)\b',
     "cinNo":        r'\b([LUu]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6})\b',
+    # Address — capture the rest of the line after common address labels (10–150 chars)
+    "address": (
+        r'(?:address|regd\.?\s*office|registered\s*office|head\s*office)'
+        r'\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\s,/\-\.]{8,148}?)(?:\n|$)'
+    ),
+    # Pincode — explicit label preferred; fallback via address field extraction handles embedded pins
+    "pincode": r'(?:pin(?:code)?|postal\s*code)\s*[:\-]?\s*([1-9]\d{5})\b',
 }
 
 
@@ -834,37 +850,15 @@ class PDFParser(BaseParser):
                 except Exception as _crc_err:
                     print(f"[PDFParser] City-rate-card fallback failed: {_crc_err}")
 
-            # Pincodes from PINCODE_LIST sections → served only
+            # Pincodes: extract from PINCODE_LIST and ODA_LIST sections
             pin_text = ""
-            for sec in sections_map.get("PINCODE_LIST", []):
-                pin_text += "\n" + sec.text
-
-            # Pincodes from ODA_LIST sections → served AND oda
-            oda_text = ""
-            for sec in sections_map.get("ODA_LIST", []):
-                oda_text += "\n" + sec.text
-
-            if not pin_text.strip() and not oda_text.strip():
-                # No classified sections — fall back to full text for served pincodes only
-                pins = self._extract_pincodes_from_text(text)
-                if pins:
-                    data.setdefault("served_pincodes", [])
-                    data["served_pincodes"].extend(pins)
-            else:
-                if pin_text.strip():
-                    pins = self._extract_pincodes_from_text(pin_text)
-                    if pins:
-                        data.setdefault("served_pincodes", [])
-                        data["served_pincodes"].extend(pins)
-                if oda_text.strip():
-                    oda_pins = self._extract_pincodes_from_text(oda_text)
-                    if oda_pins:
-                        data.setdefault("served_pincodes", [])
-                        data.setdefault("oda_pincodes", [])
-                        data["served_pincodes"].extend(oda_pins)
-                        data["oda_pincodes"].extend(oda_pins)
-                        print(f"[PDFParser] ODA_LIST sections: {len(oda_pins)} pincodes "
-                              f"→ served_pincodes + oda_pincodes")
+            for cat in ("PINCODE_LIST", "ODA_LIST"):
+                for sec in sections_map.get(cat, []):
+                    pin_text += "\n" + sec.text
+            pins = self._extract_pincodes_from_text(pin_text if pin_text.strip() else text)
+            if pins:
+                data.setdefault("served_pincodes", [])
+                data["served_pincodes"].extend(pins)
 
         # ── Dedup ────────────────────────────────────────────────────────────
         if data.get("served_pincodes"):
@@ -1171,6 +1165,26 @@ class PDFParser(BaseParser):
             m = re.search(pattern, lower)
             if not m:
                 continue
+
+            # ── Dual-rate ODA: "Rs. X/Kg or Rs. Y/consignment (higher)" ──────
+            if field == "odaCharges_dual":
+                try:
+                    per_kg  = float(m.group(1))  # absolute ₹/kg (NOT a percentage)
+                    minimum = float(m.group(2))  # flat floor per consignment
+                    charges["odaCharges"] = {
+                        "type": "per_kg_minimum",
+                        "perKg": per_kg,      # chargeFormulas.js reads odaConfig.perKg
+                        "minimum": minimum,   # chargeFormulas.js reads odaConfig.minimum
+                    }
+                    print(f"[PDFParser] ODA dual-rate: perKg={per_kg} minimum={minimum} → per_kg_minimum")
+                except (ValueError, IndexError):
+                    pass
+                continue
+
+            # Skip single-value ODA patterns if already captured by dual-rate above
+            if field in ("odaCharges_f", "odaCharges_v") and "odaCharges" in charges:
+                continue
+
             try:
                 val = float(m.group(1))
             except (ValueError, IndexError):
@@ -1298,6 +1312,15 @@ class PDFParser(BaseParser):
                 val = val.upper()
             elif field == "contactEmail":
                 val = val.lower()
+            elif field == "address":
+                # Also extract pincode embedded in address (e.g. "Jaipur - 302001")
+                # if no explicit pin: label was found
+                if "pincode" not in info:
+                    pin_m = re.search(r'\b([1-9]\d{5})\b', val)
+                    if pin_m:
+                        info["pincode"] = pin_m.group(1)
+                # Strip the pincode from the address value for cleanliness
+                val = re.sub(r'[\s\-,]+[1-9]\d{5}\b\s*$', '', val).strip()
             info[field] = val
         return info
 

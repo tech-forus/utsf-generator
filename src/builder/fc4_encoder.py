@@ -334,10 +334,24 @@ class FC4Encoder:
             charges.get("insuranceCharges") or charges.get("insurance"), "insuranceCharges"
         )
 
-        # odaCharges — complex: handles all types
-        pr["odaCharges"] = self._encode_oda_charges(
-            charges.get("odaCharges") or charges.get("oda")
-        )
+        # odaCharges — formula type (per_kg_minimum, per_kg, flat, weight_band, etc.)
+        # Backward-compat: if old UTSF put distance_weight_matrix in odaCharges,
+        # migrate it to odaMatrix and leave odaCharges as a zero placeholder.
+        _oda_raw = charges.get("odaCharges") or charges.get("oda")
+        if isinstance(_oda_raw, dict) and _oda_raw.get("type") == "distance_weight_matrix":
+            # Migrate: old data had matrix in odaCharges → move to odaMatrix
+            if not charges.get("odaMatrix"):
+                charges = dict(charges)
+                charges["odaMatrix"] = _oda_raw
+            _oda_raw = None
+        pr["odaCharges"] = self._encode_oda_charges(_oda_raw)
+
+        # odaMatrix — distance×weight matrix (separate from formula, coexists with it)
+        _oda_matrix_raw = charges.get("odaMatrix")
+        if isinstance(_oda_matrix_raw, dict) and _oda_matrix_raw.get("matrix"):
+            pr["odaMatrix"] = self._encode_oda_charges(_oda_matrix_raw)
+            print(f"[Encoder._encode_pricing]   odaMatrix: distance_weight_matrix "
+                  f"({len(_oda_matrix_raw.get('matrix', []))} dist bands)")
 
         # handlingCharges — supports per_box model (File B schema) or additive {v,f}
         h = charges.get("handlingCharges") or charges.get("handling")
@@ -551,8 +565,14 @@ class FC4Encoder:
 
         if isinstance(oda, (int, float)):
             n = float(oda)
-            result = {"v": n, "f": 0.0} if n <= 100 else {"v": 0.0, "f": n}
-            print(f"[Encoder._encode_pricing]   odaCharges: scalar → {result}")
+            # ODA is almost never a percentage. Only treat as % when the value is
+            # a whole-number integer in the plausible surcharge range [1, 30].
+            # Fractional values (e.g. 3.0 Rs/kg) are always flat charges, not percentages.
+            if n == int(n) and 1 <= n <= 30:
+                result = {"v": n, "f": 0.0}   # e.g. "ODA: 5%"
+            else:
+                result = {"v": 0.0, "f": n}   # e.g. "ODA: Rs. 3.0/kg" or "Rs. 550"
+            print(f"[Encoder._encode_pricing]   odaCharges: scalar {n} → {result}")
             return result
 
         if not isinstance(oda, dict):
@@ -603,12 +623,15 @@ class FC4Encoder:
             print(f"[Encoder._encode_pricing]   odaCharges: per_shipment f={f}")
             return result
 
-        # per_kg_minimum: max(v%/100 * weight, f)
+        # per_kg_minimum: ODA = max(perKg × weight_in_kg, minimum)
+        #   perKg   — absolute ₹ per kg (NOT a percentage)
+        #   minimum — flat floor charge per consignment (₹)
+        # Example: "Rs. 3.0/Kg or Rs. 550/consignment (higher)" → perKg=3.0, minimum=550
         if oda_type == "per_kg_minimum":
-            v = _scalar(oda.get("v") or oda.get("variable") or oda.get("perKg"), 0.0)
-            f = _scalar(oda.get("f") or oda.get("fixed") or oda.get("minimum"), 0.0)
-            result = {"type": "per_kg_minimum", "v": v, "f": f}
-            print(f"[Encoder._encode_pricing]   odaCharges: per_kg_minimum v={v} f={f}")
+            per_kg  = _scalar(oda.get("perKg") or oda.get("v") or oda.get("variable"), 0.0)
+            minimum = _scalar(oda.get("minimum") or oda.get("f") or oda.get("fixed"), 0.0)
+            result = {"type": "per_kg_minimum", "perKg": per_kg, "minimum": minimum}
+            print(f"[Encoder._encode_pricing]   odaCharges: per_kg_minimum perKg={per_kg} minimum={minimum}")
             return result
 
         # Default: treat as simple {v, f} (legacy additive)

@@ -1327,9 +1327,6 @@ def api_extract_prices():
     import time as _time
     _t0 = _time.time()
 
-    from utsf_logger import utsf_logger
-    utsf_logger.init_logs()
-
     f = request.files.get("file")
     if not f or not f.filename:
         print("[UTSF:extract-prices] ERROR: No file in request")
@@ -1503,18 +1500,12 @@ def api_extract_prices():
             "zoneDistribution":   zone_distribution,
             "inferredZones":      inferred_zones,
             "message":            message,
-            "diagnosticLogs":     utsf_logger.get_logs(),
         })
 
     except Exception as exc:
         import traceback
         print(f"[UTSF:extract-prices] EXCEPTION: {exc}\n{traceback.format_exc()}")
-        return jsonify({
-            "error": str(exc),
-            "zoneRates": {},
-            "confidence": 0,
-            "diagnosticLogs": utsf_logger.get_logs()
-        }), 500
+        return jsonify({"error": str(exc), "zoneRates": {}, "confidence": 0}), 500
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
@@ -1613,7 +1604,6 @@ def api_generate_bulk():
 
             quality = utsf.get("dataQuality", 0)
             stats   = utsf.get("stats", {})
-            from utsf_logger import utsf_logger
             return jsonify({
                 "ok":       True,
                 "utsf":     utsf,
@@ -1621,7 +1611,6 @@ def api_generate_bulk():
                 "stats":    stats,
                 "files":    saved,
                 "message":  f"Generated UTSF with quality {quality:.0f}/100",
-                "diagnosticLogs": utsf_logger.get_logs(),
             })
 
         finally:
@@ -1636,12 +1625,7 @@ def api_generate_bulk():
     except Exception as exc:
         import traceback
         print(f"[generate-bulk] Error: {exc}\n{traceback.format_exc()}")
-        from utsf_logger import utsf_logger
-        return jsonify({
-            "ok": False,
-            "error": str(exc),
-            "diagnosticLogs": utsf_logger.get_logs()
-        }), 500
+        return jsonify({"ok": False, "error": str(exc)}), 500
     finally:
         # Always clean up temp transporter folder
         try:

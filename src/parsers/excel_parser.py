@@ -1102,6 +1102,20 @@ class ExcelParser(BaseParser):
                     if pinlist.get("pincode_geo_hints"):
                         detected.setdefault("pincode_geo_hints", {})
                         detected["pincode_geo_hints"].update(pinlist["pincode_geo_hints"])
+                    # If the sheet name indicates a dedicated ODA sheet and no ODA
+                    # column was found in the rows, treat all pincodes as ODA.
+                    # (e.g. a sheet named "ODA Pincodes" lists only ODA pincodes
+                    # with no flag column because the sheet itself is the flag.)
+                    _ODA_SHEET_KW = (
+                        "oda", "out of delivery", "out_of_delivery", "edl",
+                        "special zone", "special area", "remote area",
+                        "non serviceable", "non-serviceable",
+                    )
+                    _sn = sheet_name.lower()
+                    if not pinlist["oda"] and any(kw in _sn for kw in _ODA_SHEET_KW):
+                        detected["oda_pincodes"].extend(pinlist["served"])
+                        print(f"[Excel:{sheet_name}] ODA sheet by name — "
+                              f"{len(pinlist['served'])} pincodes added to oda_pincodes")
                     classified_as.append(
                         f"SERVICEABILITY ({len(pinlist['served'])} pincodes, "
                         f"{len(pinlist['oda'])} ODA)"

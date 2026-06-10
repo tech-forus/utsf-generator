@@ -786,9 +786,18 @@ class PDFParser(BaseParser):
             )
             text_charges = self._extract_charges_from_text(charge_text)
             if text_charges:
+                from knowledge.charge_richness import charge_richness as _cr
                 data.setdefault("charges", {})
                 for k, v in text_charges.items():
-                    data["charges"].setdefault(k, v)
+                    # Richer wins: a typed config from the text path (e.g.
+                    # per_kg_minimum) must not be blocked by an untyped {v,f}
+                    # the table path captured for the same field.
+                    existing = data["charges"].get(k)
+                    if existing is None or _cr(v) > _cr(existing):
+                        if existing is not None:
+                            print(f"[PDFParser] charges.{k}: text candidate richer "
+                                  f"({_cr(v)} > {_cr(existing)}) — replacing table value")
+                        data["charges"][k] = v
 
             # Company info: extract from COMPANY_INFO sections + full text
             # (company data is usually in header/cover — safe to search everywhere)

@@ -59,11 +59,16 @@ def charge_richness(value) -> int:
             inner = value.get(complex_key)
             if isinstance(inner, (list, dict)) and inner:
                 return 10 + len(inner)
-        # {v, f}/{value, fixed, variable} style — richer when more sub-fields populated
-        nonzero = sum(1 for k in ("v", "f", "value", "variable", "fixed")
+        # {v, f}/{value, fixed, variable} style — richer when more sub-fields populated.
+        # perKg/minimum are the typed per_kg_minimum numerics — count them too.
+        nonzero = sum(1 for k in ("v", "f", "value", "variable", "fixed", "perKg", "minimum")
                       if _num(value.get(k)))
         if nonzero:
-            return 1 + nonzero
+            # A typed config (e.g. type: per_kg_minimum) carries calculation
+            # semantics a bare {v, f} lacks — rank it above an untyped peer
+            # with the same numeric count.
+            typed_bonus = 2 if isinstance(value.get("type"), str) and value.get("type") else 0
+            return 1 + nonzero + typed_bonus
         # Unknown dict shape with content (e.g. {"basis": "per_shipment"}) still
         # carries *some* information — rank it above nothing, below numeric data.
         return 1 if any(_num(v) or (isinstance(v, str) and v.strip()) for v in value.values()) else 0

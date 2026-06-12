@@ -50,8 +50,8 @@ class GeoValidator:
             print(f"[GeoValidator] WARNING: pincodes.json not found at {pincodes_path}")
             return
         try:
-            with open(pincodes_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            from knowledge.pincode_cache import load_pincodes_raw
+            data = load_pincodes_raw(pincodes_path)
             for entry in data:
                 pin_str = str(entry.get("pincode", "")).strip()
                 zone    = str(entry.get("zone", "")).strip().upper()

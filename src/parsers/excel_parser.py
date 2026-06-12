@@ -2206,10 +2206,17 @@ class ExcelParser(BaseParser):
                     _ALWAYS_FIXED = {"topayCharges","codCharges","docketCharges",
                                      "daccCharges","dodCharges","fmCharges",
                                      "appointmentCharges","prepaidCharges"}
-                    if mapped_key in _ALWAYS_FIXED and kind == "v":
+                    # Only relabel a "v"-classified value as a flat rupee amount
+                    # if the source cell wasn't actually written as a percentage
+                    # (e.g. "1%"). Otherwise a genuine "1%" charge gets corrupted
+                    # into a spurious flat Rs.1/Rs.4 fee.
+                    if mapped_key in _ALWAYS_FIXED and kind == "v" and '%' not in _full_val_str:
                         result_val = {"v": 0.0, "f": single}
                         print(f"[Excel:{sheet_name}]   charge {mapped_key} = {result_val} "
                               f"(fixed Rs {single}, not pct)")
+                    elif mapped_key in _ALWAYS_FIXED and kind == "v":
+                        # Genuine percentage (cell had '%') - preserve as {v, f:0}
+                        result_val = {"v": single, "f": 0.0}
                     elif mapped_key in ("fuel", "divisor", "minWeight") or kind == "v":
                         result_val = single
                     else:

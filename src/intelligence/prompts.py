@@ -37,20 +37,28 @@ Return ONLY valid JSON. All numeric values should be numbers (not strings).
   "miscCharges": number (other flat charges),
   "fuel": number (fuel surcharge percentage, e.g. 18 means 18%),
   "rovCharges": {
-    "type": "percentage_freight",
-    "variable": number (ROV % of freight),
+    "type": "percentage_freight or percentage_invoice",
+    "variable": number (ROV % of basis),
     "fixed": number (minimum ROV Rs)
   },
   "insuranceCharges": {
-    "variable": number (insurance % of invoice value),
+    "type": "percentage_invoice or percentage_freight",
+    "variable": number (insurance % of basis),
     "fixed": number (minimum insurance Rs)
   },
   "odaCharges": {
-    "type": "per_kg_minimum or weight_band or distance_weight_matrix",
+    "type": "per_kg_minimum or weight_band or per_shipment",
     "perKg": number or null,
     "minimum": number or null,
-    "bands": array or null,
-    "matrix": array or null
+    "bands": array or null
+  },
+  "odaMatrix": {
+    "type": "distance_weight_matrix",
+    "matrix": [
+      {"minKm": number, "maxKm": number or null, "bands": [
+        {"minKg": number, "maxKg": number or null, "charge": number}
+      ]}
+    ]
   },
   "handlingCharges": {
     "type": "percentage_freight or per_kg_minimum",
@@ -64,7 +72,15 @@ Return ONLY valid JSON. All numeric values should be numbers (not strings).
   "prepaidCharges": {"variable": number, "fixed": number},
   "dodCharges": number or null
 }
-Only include fields that are explicitly mentioned in the data. Use null for unknown."""
+Only include fields that are explicitly mentioned in the data. Use null for unknown.
+
+ODA charges: a document may describe ODA surcharges in MULTIPLE formats at once
+(e.g. "Rs. 4.0/Kg or Rs. 750/consignment, whichever is higher" AND a separate
+distance x weight surcharge table). When this happens, extract ALL of them:
+put the per-kg/minimum/weight-band/per-shipment rule in "odaCharges" and the
+distance x weight table in "odaMatrix" — both fields can be present together.
+Do not pick only one format and discard the other; every ODA charge format
+present in the source document must be captured."""
 
 
 ZONE_MATRIX_EXTRACTION_PROMPT = """You are extracting a freight zone price matrix.

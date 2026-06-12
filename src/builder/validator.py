@@ -55,8 +55,8 @@ def _check_pricing_sanity(utsf: Dict, errors: List, warnings: List):
     if isinstance(oda, dict) and oda:
         oda_type = oda.get("type")
         if oda_type == "per_kg_minimum":
-            if not oda.get("v") and not oda.get("f"):
-                errors.append("odaCharges is per_kg_minimum but has no v or f values")
+            if not oda.get("perKg") and not oda.get("minimum"):
+                errors.append("odaCharges is per_kg_minimum but has no perKg or minimum values")
         elif oda_type == "weight_band":
             if not oda.get("bands"):
                 errors.append("odaCharges is weight_band but has no bands")

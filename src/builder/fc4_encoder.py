@@ -325,14 +325,26 @@ class FC4Encoder:
 
         # ── Variable+fixed charges ─────────────────────────────────────────────
         # rovCharges
-        pr["rovCharges"] = self._encode_vf_charge(
-            charges.get("rovCharges") or charges.get("rov"), "rovCharges"
-        )
+        rov_raw = charges.get("rovCharges") or charges.get("rov")
+        pr["rovCharges"] = self._encode_vf_charge(rov_raw, "rovCharges")
+        if isinstance(rov_raw, dict):
+            t = rov_raw.get("type", "")
+            basis = rov_raw.get("basis", "")
+            if "invoice" in t or t == "percentage_invoice" or basis == "invoice":
+                pr["rovCharges"]["basis"] = "invoice"
+            elif "freight" in t or t == "percentage_freight" or basis == "freight":
+                pr["rovCharges"]["basis"] = "freight"
 
         # insuranceCharges
-        pr["insuranceCharges"] = self._encode_vf_charge(
-            charges.get("insuranceCharges") or charges.get("insurance"), "insuranceCharges"
-        )
+        ins_raw = charges.get("insuranceCharges") or charges.get("insurance")
+        pr["insuranceCharges"] = self._encode_vf_charge(ins_raw, "insuranceCharges")
+        if isinstance(ins_raw, dict):
+            t = ins_raw.get("type", "")
+            basis = ins_raw.get("basis", "")
+            if "invoice" in t or t == "percentage_invoice" or basis == "invoice":
+                pr["insuranceCharges"]["basis"] = "invoice"
+            elif "freight" in t or t == "percentage_freight" or basis == "freight":
+                pr["insuranceCharges"]["basis"] = "freight"
 
         # odaCharges — formula type (per_kg_minimum, per_kg, flat, weight_band, etc.)
         # Backward-compat: if old UTSF put distance_weight_matrix in odaCharges,
@@ -430,6 +442,7 @@ class FC4Encoder:
             "rovCharges":          ["rovCharges", "rov"],
             "insuranceCharges":    ["insuranceCharges", "insurance"],
             "odaCharges":          ["odaCharges", "oda"],
+            "odaMatrix":           ["odaMatrix"],
             "handlingCharges":     ["handlingCharges", "handling"],
             "fmCharges":           ["fmCharges", "fm"],
             "appointmentCharges":  ["appointmentCharges", "appointment"],

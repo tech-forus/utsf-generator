@@ -441,8 +441,8 @@ class OICREngine:
 
     def _load_pincodes(self, path: str):
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            from knowledge.pincode_cache import load_pincodes_raw
+            data = load_pincodes_raw(path)
             # Supports both list-of-dicts and dict format
             if isinstance(data, list):
                 for entry in data:

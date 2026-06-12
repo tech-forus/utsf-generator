@@ -190,3 +190,18 @@ class OllamaExtractor:
         context = json.dumps(extracted_pieces, indent=2)[:6000]
         result = self.extract(MERGE_PROMPT, context)
         return result or extracted_pieces[0]
+
+
+_extractor: Optional["OllamaExtractor"] = None
+
+
+def get_ollama_extractor() -> "OllamaExtractor":
+    """Get (or create) the shared OllamaExtractor instance.
+
+    Connection/availability is checked once per process and reused across
+    files instead of re-probing Ollama for every file in a run.
+    """
+    global _extractor
+    if _extractor is None:
+        _extractor = OllamaExtractor()
+    return _extractor

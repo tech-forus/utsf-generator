@@ -70,20 +70,26 @@ SUB_DIVIDER  = "-" * 52
 
 
 def get_parser_for_file(file_path: str):
-    """Return the right parser for a file extension."""
+    """Return the right parser for a file extension, plus a precomputed parse
+    result if one was already produced while choosing the parser (to avoid
+    re-parsing the same file again in the caller's main loop).
+
+    Returns (parser, precomputed_result) where precomputed_result is None
+    unless the parser was already run as part of selection (e.g. PDF probe parse).
+    """
     ext = os.path.splitext(file_path)[1].lower()
 
     if ext in (".xlsx", ".xls", ".csv", ".tsv"):
         from parsers.excel_parser import ExcelParser
-        return ExcelParser()
+        return ExcelParser(), None
 
     elif ext in (".docx", ".doc"):
         from parsers.word_parser import WordParser
-        return WordParser()
+        return WordParser(), None
 
     elif ext in (".pptx", ".ppt"):
         from parsers.ppt_parser import PPTParser
-        return PPTParser()
+        return PPTParser(), None
 
     elif ext == ".pdf":
         from parsers.pdf_parser import PDFParser
@@ -93,20 +99,20 @@ def get_parser_for_file(file_path: str):
             result = parser.parse(file_path)
             if not result or len(str(result)) < 100:
                 raise Exception("Weak or empty parse")
-            return parser
+            return parser, result
         except Exception as e:
             print(f"[Fallback → TCI Parser Triggered]: {e}")
             from parsers.tci_parser import TCIParser
-            return TCIParser()
+            return TCIParser(), None
 
     elif ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"):
         from parsers.image_parser import ImageParser
-        return ImageParser()
+        return ImageParser(), None
 
     elif ext == ".json":
-        return None  # Handle inline
+        return None, None  # Handle inline
 
-    return None
+    return None, None
 
 
 def parse_json_file(file_path: str) -> Dict:
@@ -586,7 +592,7 @@ def generate_utsf_for_transporter(
                 print(f"    [ERROR] JSON parse failed: {e}")
             continue
 
-        parser = get_parser_for_file(file_path)
+        parser, precomputed_result = get_parser_for_file(file_path)
         if not parser:
             print(f"    ? Unsupported file type: {ext}")
             continue
@@ -594,7 +600,11 @@ def generate_utsf_for_transporter(
         print(f"    Parser: {type(parser).__name__}")
 
         try:
-            result = parser.parse(file_path, doc_context=doc_ctx)
+            # Reuse the probe-parse result from get_parser_for_file (PDFs) instead
+            # of re-parsing the same file — doc_context is unused by parse(), so
+            # the result would be identical.
+            result = precomputed_result if precomputed_result is not None \
+                else parser.parse(file_path, doc_context=doc_ctx)
             piece  = result.get("data", {})
             piece["_sourceFile"] = rel
             extracted_pieces.append(piece)
@@ -609,8 +619,8 @@ def generate_utsf_for_transporter(
             # ----------------------------------------------------------
             if use_ai and result.get("text") and len(result["text"]) > 100:
                 try:
-                    from intelligence.ollama_client import OllamaExtractor
-                    extractor = OllamaExtractor()
+                    from intelligence.ollama_client import get_ollama_extractor
+                    extractor = get_ollama_extractor()
 
                     if extractor.is_available():
                         print(f"    AI extraction in progress...")

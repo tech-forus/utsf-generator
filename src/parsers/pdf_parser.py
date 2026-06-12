@@ -113,7 +113,7 @@ _CHARGE_PATTERNS = [
 
     # ── ROV / FOV ─────────────────────────────────────────────────────────────
     ("rovCharges_v",    rf"(?:r\.?o\.?v\.?|f\.?o\.?v\.?|risk\s*(?:of\s*value)?|owner.?s?\s*risk){_NL}(\d+(?:\.\d+)?)\s*%"),
-    ("rovCharges_f",    rf"(?:r\.?o\.?v\.?|f\.?o\.?v\.?)\s*(?:min(?:imum)?)?{_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)"),
+    ("rovCharges_f",    rf"(?:r\.?o\.?v\.?|f\.?o\.?v\.?)\s*(?:min(?:imum)?)?{_NL}(?:rs\.?\s*)?(\d+(?:\.\d+)?)(?!\s*%)"),
 
     # ── ODA ───────────────────────────────────────────────────────────────────
     # Dual-rate "higher of": "Rs. X/Kg or Rs. Y/consignment (higher)" → per_kg_minimum
@@ -1201,7 +1201,18 @@ class PDFParser(BaseParser):
 
             if field.endswith("_v"):
                 canon = field[:-2]
-                charges.setdefault(canon, {})["v"] = val
+                entry = charges.setdefault(canon, {})
+                entry["v"] = val
+                # For ROV/FOV and insurance, detect whether the percentage is
+                # "on invoice value" or "on freight" so chargeFormulas.js knows
+                # what base to apply it to (without a basis, these charges are
+                # always treated as 0 — see chargeFormulas.js rovCharges logic).
+                if canon in ("rovCharges", "insuranceCharges"):
+                    context = lower[m.start():m.end() + 40]
+                    if "invoice" in context:
+                        entry["basis"] = "invoice"
+                    elif "freight" in context:
+                        entry["basis"] = "freight"
             elif field.endswith("_f"):
                 canon = field[:-2]
                 # Sanity cap for fixed charges — reject volumetric artefacts

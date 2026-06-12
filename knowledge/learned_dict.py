@@ -24,6 +24,8 @@ LEARNED_CHARGES = {
     'dacccharges': 'daccCharges',
 
     'insurancecharges': 'insuranceCharges',
+
+    'odamatrix': 'odaMatrix',
 }
 
 LEARNED_ZONES = {

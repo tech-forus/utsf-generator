@@ -85,8 +85,8 @@ class ZoneMapper:
 
     def _load_pincodes(self, path: str):
         """Load master pincodes.json and build lookup tables."""
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        from knowledge.pincode_cache import load_pincodes_raw
+        data = load_pincodes_raw(path)
 
         # city+state → pincodes index (used for serviceability range inference)
         self._city_state_to_pincodes: Dict[tuple, Set[int]] = defaultdict(set)

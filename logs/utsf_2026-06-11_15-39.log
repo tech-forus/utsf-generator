@@ -1,0 +1,83 @@
+[UTSF] Log file: C:\Users\tech\Downloads\09-06-2026\utsf-generator\logs\utsf_2026-06-11_15-39.log
+ * Serving Flask app 'web.app'
+ * Debug mode: off
+2026-06-11 15:39:01 INFO     [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-06-11 15:39:01 INFO     [33mPress CTRL+C to quit[0m
+2026-06-11 15:39:03 INFO     127.0.0.1 - - [11/Jun/2026 15:39:03] "GET / HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-11 15:39:05 INFO     127.0.0.1 - - [11/Jun/2026 15:39:05] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-11 15:40:10 INFO     127.0.0.1 - - [11/Jun/2026 15:40:10] "GET /api/status HTTP/1.1" 200 -
+2026-06-11 15:40:10 INFO     127.0.0.1 - - [11/Jun/2026 15:40:10] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-11 15:40:11 INFO     127.0.0.1 - - [11/Jun/2026 15:40:11] "GET /transporter/gfbv HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_charges.xlsx -> charges/ (override='charges')
+2026-06-11 15:40:11 INFO     127.0.0.1 - - [11/Jun/2026 15:40:11] "POST /transporter/gfbv/upload HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_serviceability.csv -> zone_data/ (override='zone_data')
+2026-06-11 15:40:11 INFO     127.0.0.1 - - [11/Jun/2026 15:40:11] "POST /transporter/gfbv/upload HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-11 15:40:11 INFO     127.0.0.1 - - [11/Jun/2026 15:40:11] "POST /transporter/gfbv/upload HTTP/1.1" 200 -
+2026-06-11 15:40:11 INFO     127.0.0.1 - - [11/Jun/2026 15:40:11] "GET /transporter/gfbv/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-11 15:41:17 INFO     127.0.0.1 - - [11/Jun/2026 15:41:17] "GET /api/status HTTP/1.1" 200 -
+2026-06-11 15:41:17 INFO     127.0.0.1 - - [11/Jun/2026 15:41:17] "GET /output/gfbv/download HTTP/1.1" 200 -
+2026-06-11 15:41:17 INFO     127.0.0.1 - - [11/Jun/2026 15:41:17] "GET /output/gfbv/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-11 16:11:41 INFO     127.0.0.1 - - [11/Jun/2026 16:11:41] "GET /api/status HTTP/1.1" 200 -
+2026-06-11 16:11:41 INFO     127.0.0.1 - - [11/Jun/2026 16:11:41] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-11 16:11:41 INFO     127.0.0.1 - - [11/Jun/2026 16:11:41] "GET /transporter/ju HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_charges.xlsx -> charges/ (override='charges')
+2026-06-11 16:11:41 INFO     127.0.0.1 - - [11/Jun/2026 16:11:41] "POST /transporter/ju/upload HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_serviceability.csv -> zone_data/ (override='zone_data')
+2026-06-11 16:11:41 INFO     127.0.0.1 - - [11/Jun/2026 16:11:41] "POST /transporter/ju/upload HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-11 16:11:41 INFO     127.0.0.1 - - [11/Jun/2026 16:11:41] "POST /transporter/ju/upload HTTP/1.1" 200 -
+2026-06-11 16:11:41 INFO     127.0.0.1 - - [11/Jun/2026 16:11:41] "GET /transporter/ju/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-11 16:13:02 INFO     127.0.0.1 - - [11/Jun/2026 16:13:02] "GET /api/status HTTP/1.1" 200 -
+2026-06-11 16:13:02 INFO     127.0.0.1 - - [11/Jun/2026 16:13:02] "GET /output/ju/download HTTP/1.1" 200 -
+2026-06-11 16:13:02 INFO     127.0.0.1 - - [11/Jun/2026 16:13:02] "GET /output/ju/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-11 17:39:15 INFO     127.0.0.1 - - [11/Jun/2026 17:39:15] "GET /api/status HTTP/1.1" 200 -
+2026-06-11 17:39:15 INFO     127.0.0.1 - - [11/Jun/2026 17:39:15] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-11 17:39:15 INFO     127.0.0.1 - - [11/Jun/2026 17:39:15] "GET /transporter/lkjhg HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_charges.xlsx -> charges/ (override='charges')
+2026-06-11 17:39:15 INFO     127.0.0.1 - - [11/Jun/2026 17:39:15] "POST /transporter/lkjhg/upload HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_serviceability.csv -> zone_data/ (override='zone_data')
+2026-06-11 17:39:15 INFO     127.0.0.1 - - [11/Jun/2026 17:39:15] "POST /transporter/lkjhg/upload HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-11 17:39:15 INFO     127.0.0.1 - - [11/Jun/2026 17:39:15] "POST /transporter/lkjhg/upload HTTP/1.1" 200 -
+2026-06-11 17:39:16 INFO     127.0.0.1 - - [11/Jun/2026 17:39:16] "GET /transporter/lkjhg/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-11 17:40:40 INFO     127.0.0.1 - - [11/Jun/2026 17:40:40] "GET /api/status HTTP/1.1" 200 -
+2026-06-11 17:40:40 INFO     127.0.0.1 - - [11/Jun/2026 17:40:40] "GET /output/lkjhg/download HTTP/1.1" 200 -
+2026-06-11 17:40:40 INFO     127.0.0.1 - - [11/Jun/2026 17:40:40] "GET /output/lkjhg/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-11 17:49:59 INFO     127.0.0.1 - - [11/Jun/2026 17:49:59] "GET /api/status HTTP/1.1" 200 -
+2026-06-11 17:49:59 INFO     127.0.0.1 - - [11/Jun/2026 17:49:59] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-11 17:49:59 INFO     127.0.0.1 - - [11/Jun/2026 17:49:59] "GET /transporter/sdcfvb HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_charges.xlsx -> charges/ (override='charges')
+2026-06-11 17:49:59 INFO     127.0.0.1 - - [11/Jun/2026 17:49:59] "POST /transporter/sdcfvb/upload HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_serviceability.csv -> zone_data/ (override='zone_data')
+2026-06-11 17:49:59 INFO     127.0.0.1 - - [11/Jun/2026 17:49:59] "POST /transporter/sdcfvb/upload HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-11 17:49:59 INFO     127.0.0.1 - - [11/Jun/2026 17:49:59] "POST /transporter/sdcfvb/upload HTTP/1.1" 200 -
+2026-06-11 17:49:59 INFO     127.0.0.1 - - [11/Jun/2026 17:49:59] "GET /transporter/sdcfvb/generate HTTP/1.1" 200 -
+2026-06-11 17:50:57 INFO     127.0.0.1 - - [11/Jun/2026 17:50:57] "GET /api/status HTTP/1.1" 200 -
+2026-06-11 17:50:57 INFO     127.0.0.1 - - [11/Jun/2026 17:50:57] "GET /output/sdcfvb/download HTTP/1.1" 200 -
+2026-06-11 17:50:57 INFO     127.0.0.1 - - [11/Jun/2026 17:50:57] "GET /output/sdcfvb/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-11 17:58:03 INFO     127.0.0.1 - - [11/Jun/2026 17:58:03] "GET /api/status HTTP/1.1" 200 -
+2026-06-11 17:58:03 INFO     127.0.0.1 - - [11/Jun/2026 17:58:03] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-11 17:58:03 INFO     127.0.0.1 - - [11/Jun/2026 17:58:03] "GET /transporter/eddvf HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_charges.xlsx -> charges/ (override='charges')
+2026-06-11 17:58:03 INFO     127.0.0.1 - - [11/Jun/2026 17:58:03] "POST /transporter/eddvf/upload HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_serviceability.csv -> zone_data/ (override='zone_data')
+2026-06-11 17:58:04 INFO     127.0.0.1 - - [11/Jun/2026 17:58:04] "POST /transporter/eddvf/upload HTTP/1.1" 200 -
+[Upload] jugaad_jahaaz_transporters_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-11 17:58:04 INFO     127.0.0.1 - - [11/Jun/2026 17:58:04] "POST /transporter/eddvf/upload HTTP/1.1" 200 -
+2026-06-11 17:58:04 INFO     127.0.0.1 - - [11/Jun/2026 17:58:04] "GET /transporter/eddvf/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-11 17:59:11 INFO     127.0.0.1 - - [11/Jun/2026 17:59:11] "GET /api/status HTTP/1.1" 200 -
+2026-06-11 17:59:11 INFO     127.0.0.1 - - [11/Jun/2026 17:59:11] "GET /output/eddvf/download HTTP/1.1" 200 -
+2026-06-11 17:59:11 INFO     127.0.0.1 - - [11/Jun/2026 17:59:11] "GET /output/eddvf/download HTTP/1.1" 200 -

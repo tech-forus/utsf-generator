@@ -1,0 +1,12 @@
+[UTSF] Log file: C:\Users\tech\Downloads\09-06-2026\utsf-generator\logs\utsf_2026-06-16_15-08.log
+ * Serving Flask app 'web.app'
+ * Debug mode: off
+2026-06-16 15:08:34 INFO     [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-06-16 15:08:34 INFO     [33mPress CTRL+C to quit[0m
+2026-06-16 15:08:36 INFO     127.0.0.1 - - [16/Jun/2026 15:08:36] "GET / HTTP/1.1" 200 -
+2026-06-16 15:08:36 INFO     127.0.0.1 - - [16/Jun/2026 15:08:36] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-16 15:08:38 INFO     127.0.0.1 - - [16/Jun/2026 15:08:38] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-16 15:19:17 INFO     127.0.0.1 - - [16/Jun/2026 15:19:17] "GET /api/status HTTP/1.1" 200 -

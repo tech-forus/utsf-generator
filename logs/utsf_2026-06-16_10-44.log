@@ -1,0 +1,53 @@
+[UTSF] Log file: C:\Users\tech\Downloads\09-06-2026\utsf-generator\logs\utsf_2026-06-16_10-44.log
+ * Serving Flask app 'web.app'
+ * Debug mode: off
+2026-06-16 10:44:34 INFO     [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-06-16 10:44:34 INFO     [33mPress CTRL+C to quit[0m
+2026-06-16 10:44:36 INFO     127.0.0.1 - - [16/Jun/2026 10:44:36] "GET / HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-16 10:44:39 INFO     127.0.0.1 - - [16/Jun/2026 10:44:39] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-16 12:40:31 INFO     127.0.0.1 - - [16/Jun/2026 12:40:31] "GET /api/status HTTP/1.1" 200 -
+2026-06-16 12:40:31 INFO     127.0.0.1 - - [16/Jun/2026 12:40:31] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-16 12:40:31 INFO     127.0.0.1 - - [16/Jun/2026 12:40:31] "GET /transporter/frfvfvdfvd HTTP/1.1" 200 -
+[Upload] northern_nakshatra_fleet_charges.docx -> charges/ (override='charges')
+2026-06-16 12:40:31 INFO     127.0.0.1 - - [16/Jun/2026 12:40:31] "POST /transporter/frfvfvdfvd/upload HTTP/1.1" 200 -
+[Upload] northern_nakshatra_fleet_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-16 12:40:31 INFO     127.0.0.1 - - [16/Jun/2026 12:40:31] "POST /transporter/frfvfvdfvd/upload HTTP/1.1" 200 -
+2026-06-16 12:40:32 INFO     127.0.0.1 - - [16/Jun/2026 12:40:32] "GET /transporter/frfvfvdfvd/generate HTTP/1.1" 200 -
+2026-06-16 12:40:37 INFO     127.0.0.1 - - [16/Jun/2026 12:40:37] "GET /output/frfvfvdfvd/download HTTP/1.1" 200 -
+2026-06-16 12:40:38 INFO     127.0.0.1 - - [16/Jun/2026 12:40:38] "GET /output/frfvfvdfvd/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-16 12:59:58 INFO     127.0.0.1 - - [16/Jun/2026 12:59:58] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-16 13:04:03 INFO     127.0.0.1 - - [16/Jun/2026 13:04:03] "GET /api/status HTTP/1.1" 200 -
+2026-06-16 13:04:03 INFO     127.0.0.1 - - [16/Jun/2026 13:04:03] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-16 13:04:03 INFO     127.0.0.1 - - [16/Jun/2026 13:04:03] "GET /transporter/ihugtf HTTP/1.1" 200 -
+[Upload] southern_samosa_transport_charges.xlsx -> charges/ (override='charges')
+2026-06-16 13:04:03 INFO     127.0.0.1 - - [16/Jun/2026 13:04:03] "POST /transporter/ihugtf/upload HTTP/1.1" 200 -
+[Upload] southern_samosa_transport_serviceability.csv -> zone_data/ (override='zone_data')
+2026-06-16 13:04:03 INFO     127.0.0.1 - - [16/Jun/2026 13:04:03] "POST /transporter/ihugtf/upload HTTP/1.1" 200 -
+[Upload] southern_samosa_transport_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-16 13:04:03 INFO     127.0.0.1 - - [16/Jun/2026 13:04:03] "POST /transporter/ihugtf/upload HTTP/1.1" 200 -
+2026-06-16 13:04:03 INFO     127.0.0.1 - - [16/Jun/2026 13:04:03] "GET /transporter/ihugtf/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-16 13:05:07 INFO     127.0.0.1 - - [16/Jun/2026 13:05:07] "GET /api/status HTTP/1.1" 200 -
+2026-06-16 13:05:07 INFO     127.0.0.1 - - [16/Jun/2026 13:05:07] "GET /output/ihugtf/download HTTP/1.1" 200 -
+2026-06-16 13:05:07 INFO     127.0.0.1 - - [16/Jun/2026 13:05:07] "GET /output/ihugtf/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-16 15:04:58 INFO     127.0.0.1 - - [16/Jun/2026 15:04:58] "GET /api/status HTTP/1.1" 200 -
+2026-06-16 15:04:58 INFO     127.0.0.1 - - [16/Jun/2026 15:04:58] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-16 15:04:58 INFO     127.0.0.1 - - [16/Jun/2026 15:04:58] "GET /transporter/sadcf HTTP/1.1" 200 -
+[Upload] western_wheelwala_pvt_ltd_charges.docx -> charges/ (override='charges')
+2026-06-16 15:04:58 INFO     127.0.0.1 - - [16/Jun/2026 15:04:58] "POST /transporter/sadcf/upload HTTP/1.1" 200 -
+[Upload] western_wheelwala_pvt_ltd_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-16 15:04:58 INFO     127.0.0.1 - - [16/Jun/2026 15:04:58] "POST /transporter/sadcf/upload HTTP/1.1" 200 -
+[Upload] western_wheelwala_pvt_ltd_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-16 15:04:58 INFO     127.0.0.1 - - [16/Jun/2026 15:04:58] "POST /transporter/sadcf/upload HTTP/1.1" 200 -
+2026-06-16 15:04:58 INFO     127.0.0.1 - - [16/Jun/2026 15:04:58] "GET /transporter/sadcf/generate HTTP/1.1" 200 -
+2026-06-16 15:05:54 INFO     127.0.0.1 - - [16/Jun/2026 15:05:54] "GET /api/status HTTP/1.1" 200 -
+2026-06-16 15:05:54 INFO     127.0.0.1 - - [16/Jun/2026 15:05:54] "GET /output/sadcf/download HTTP/1.1" 200 -
+2026-06-16 15:05:54 INFO     127.0.0.1 - - [16/Jun/2026 15:05:54] "GET /output/sadcf/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-16 15:08:27 INFO     127.0.0.1 - - [16/Jun/2026 15:08:27] "GET /api/status HTTP/1.1" 200 -

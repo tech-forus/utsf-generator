@@ -1,0 +1,40 @@
+[UTSF] Log file: C:\Users\tech\Downloads\09-06-2026\utsf-generator\logs\utsf_2026-06-12_10-56.log
+ * Serving Flask app 'web.app'
+ * Debug mode: off
+2026-06-12 10:56:01 INFO     [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-06-12 10:56:01 INFO     [33mPress CTRL+C to quit[0m
+2026-06-12 10:56:03 INFO     127.0.0.1 - - [12/Jun/2026 10:56:03] "GET / HTTP/1.1" 200 -
+2026-06-12 10:56:03 INFO     127.0.0.1 - - [12/Jun/2026 10:56:03] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 10:56:05 INFO     127.0.0.1 - - [12/Jun/2026 10:56:05] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 10:56:14 INFO     127.0.0.1 - - [12/Jun/2026 10:56:14] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-12 10:56:14 INFO     127.0.0.1 - - [12/Jun/2026 10:56:14] "GET /transporter/csdc HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_charges.pdf -> charges/ (override='charges')
+2026-06-12 10:56:14 INFO     127.0.0.1 - - [12/Jun/2026 10:56:14] "POST /transporter/csdc/upload HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 10:56:14 INFO     127.0.0.1 - - [12/Jun/2026 10:56:14] "POST /transporter/csdc/upload HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_zone_matrix.csv -> zone_data/ (override='zone_data')
+2026-06-12 10:56:14 INFO     127.0.0.1 - - [12/Jun/2026 10:56:14] "POST /transporter/csdc/upload HTTP/1.1" 200 -
+2026-06-12 10:56:14 INFO     127.0.0.1 - - [12/Jun/2026 10:56:14] "GET /transporter/csdc/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 10:58:15 INFO     127.0.0.1 - - [12/Jun/2026 10:58:15] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 10:58:15 INFO     127.0.0.1 - - [12/Jun/2026 10:58:15] "GET /output/csdc/download HTTP/1.1" 200 -
+2026-06-12 10:58:15 INFO     127.0.0.1 - - [12/Jun/2026 10:58:15] "GET /output/csdc/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 11:15:44 INFO     127.0.0.1 - - [12/Jun/2026 11:15:44] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 11:15:44 INFO     127.0.0.1 - - [12/Jun/2026 11:15:44] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-12 11:15:44 INFO     127.0.0.1 - - [12/Jun/2026 11:15:44] "GET /transporter/sfef HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_charges.pdf -> charges/ (override='charges')
+2026-06-12 11:15:44 INFO     127.0.0.1 - - [12/Jun/2026 11:15:44] "POST /transporter/sfef/upload HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 11:15:44 INFO     127.0.0.1 - - [12/Jun/2026 11:15:44] "POST /transporter/sfef/upload HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_zone_matrix.csv -> zone_data/ (override='zone_data')
+2026-06-12 11:15:44 INFO     127.0.0.1 - - [12/Jun/2026 11:15:44] "POST /transporter/sfef/upload HTTP/1.1" 200 -
+2026-06-12 11:15:45 INFO     127.0.0.1 - - [12/Jun/2026 11:15:45] "GET /transporter/sfef/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 11:17:37 INFO     127.0.0.1 - - [12/Jun/2026 11:17:37] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 11:17:37 INFO     127.0.0.1 - - [12/Jun/2026 11:17:37] "GET /output/sfef/download HTTP/1.1" 200 -
+2026-06-12 11:17:37 INFO     127.0.0.1 - - [12/Jun/2026 11:17:37] "GET /output/sfef/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 11:45:44 INFO     127.0.0.1 - - [12/Jun/2026 11:45:44] "GET /api/status HTTP/1.1" 200 -

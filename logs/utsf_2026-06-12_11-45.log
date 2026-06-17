@@ -1,0 +1,35 @@
+[UTSF] Log file: C:\Users\tech\Downloads\09-06-2026\utsf-generator\logs\utsf_2026-06-12_11-45.log
+ * Serving Flask app 'web.app'
+ * Debug mode: off
+2026-06-12 11:45:54 INFO     [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-06-12 11:45:54 INFO     [33mPress CTRL+C to quit[0m
+2026-06-12 11:45:56 INFO     127.0.0.1 - - [12/Jun/2026 11:45:56] "GET / HTTP/1.1" 200 -
+[Ollama] Error: [WinError 10053] An established connection was aborted by the software in your host machine
+2026-06-12 11:45:58 INFO     127.0.0.1 - - [12/Jun/2026 11:45:58] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 11:46:00 INFO     127.0.0.1 - - [12/Jun/2026 11:46:00] "DELETE /transporter/asdfg HTTP/1.1" 200 -
+2026-06-12 11:46:00 INFO     127.0.0.1 - - [12/Jun/2026 11:46:00] "GET / HTTP/1.1" 200 -
+2026-06-12 11:46:00 INFO     127.0.0.1 - - [12/Jun/2026 11:46:00] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 11:46:02 INFO     127.0.0.1 - - [12/Jun/2026 11:46:02] "DELETE /transporter/cdscf HTTP/1.1" 200 -
+2026-06-12 11:46:02 INFO     127.0.0.1 - - [12/Jun/2026 11:46:02] "GET / HTTP/1.1" 200 -
+2026-06-12 11:46:03 INFO     127.0.0.1 - - [12/Jun/2026 11:46:03] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 11:46:04 INFO     127.0.0.1 - - [12/Jun/2026 11:46:04] "DELETE /transporter/csdc HTTP/1.1" 200 -
+2026-06-12 11:46:05 INFO     127.0.0.1 - - [12/Jun/2026 11:46:05] "GET / HTTP/1.1" 200 -
+2026-06-12 11:46:05 INFO     127.0.0.1 - - [12/Jun/2026 11:46:05] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 11:47:05 INFO     127.0.0.1 - - [12/Jun/2026 11:47:05] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 11:47:05 INFO     127.0.0.1 - - [12/Jun/2026 11:47:05] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-12 11:47:05 INFO     127.0.0.1 - - [12/Jun/2026 11:47:05] "GET /transporter/asdfg HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_charges.pdf -> charges/ (override='charges')
+2026-06-12 11:47:05 INFO     127.0.0.1 - - [12/Jun/2026 11:47:05] "POST /transporter/asdfg/upload HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 11:47:05 INFO     127.0.0.1 - - [12/Jun/2026 11:47:05] "POST /transporter/asdfg/upload HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_zone_matrix.csv -> zone_data/ (override='zone_data')
+2026-06-12 11:47:05 INFO     127.0.0.1 - - [12/Jun/2026 11:47:05] "POST /transporter/asdfg/upload HTTP/1.1" 200 -
+2026-06-12 11:47:05 INFO     127.0.0.1 - - [12/Jun/2026 11:47:05] "GET /transporter/asdfg/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 11:48:58 INFO     127.0.0.1 - - [12/Jun/2026 11:48:58] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 11:48:58 INFO     127.0.0.1 - - [12/Jun/2026 11:48:58] "GET /output/asdfg/download HTTP/1.1" 200 -
+2026-06-12 11:48:58 INFO     127.0.0.1 - - [12/Jun/2026 11:48:58] "GET /output/asdfg/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 12:06:26 INFO     127.0.0.1 - - [12/Jun/2026 12:06:26] "GET /api/status HTTP/1.1" 200 -

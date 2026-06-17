@@ -1,0 +1,130 @@
+[UTSF] Log file: C:\Users\tech\Downloads\09-06-2026\utsf-generator\logs\utsf_2026-06-12_13-27.log
+ * Serving Flask app 'web.app'
+ * Debug mode: off
+2026-06-12 13:27:04 INFO     [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-06-12 13:27:04 INFO     [33mPress CTRL+C to quit[0m
+2026-06-12 13:27:06 INFO     127.0.0.1 - - [12/Jun/2026 13:27:06] "GET / HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 13:27:08 INFO     127.0.0.1 - - [12/Jun/2026 13:27:08] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 13:27:29 INFO     127.0.0.1 - - [12/Jun/2026 13:27:29] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 13:27:29 INFO     127.0.0.1 - - [12/Jun/2026 13:27:29] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-12 13:27:29 INFO     127.0.0.1 - - [12/Jun/2026 13:27:29] "GET /transporter/dwd HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_charges.pdf -> charges/ (override='charges')
+2026-06-12 13:27:29 INFO     127.0.0.1 - - [12/Jun/2026 13:27:29] "POST /transporter/dwd/upload HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 13:27:29 INFO     127.0.0.1 - - [12/Jun/2026 13:27:29] "POST /transporter/dwd/upload HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_zone_matrix.csv -> zone_data/ (override='zone_data')
+2026-06-12 13:27:29 INFO     127.0.0.1 - - [12/Jun/2026 13:27:29] "POST /transporter/dwd/upload HTTP/1.1" 200 -
+2026-06-12 13:27:29 INFO     127.0.0.1 - - [12/Jun/2026 13:27:29] "GET /transporter/dwd/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 13:29:12 INFO     127.0.0.1 - - [12/Jun/2026 13:29:12] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 13:29:12 INFO     127.0.0.1 - - [12/Jun/2026 13:29:12] "GET /output/dwd/download HTTP/1.1" 200 -
+2026-06-12 13:29:12 INFO     127.0.0.1 - - [12/Jun/2026 13:29:12] "GET /output/dwd/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 14:08:51 INFO     127.0.0.1 - - [12/Jun/2026 14:08:51] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 14:08:51 INFO     127.0.0.1 - - [12/Jun/2026 14:08:51] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-12 14:08:51 INFO     127.0.0.1 - - [12/Jun/2026 14:08:51] "GET /transporter/vgf HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_charges.pdf -> charges/ (override='charges')
+2026-06-12 14:08:51 INFO     127.0.0.1 - - [12/Jun/2026 14:08:51] "POST /transporter/vgf/upload HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 14:08:51 INFO     127.0.0.1 - - [12/Jun/2026 14:08:51] "POST /transporter/vgf/upload HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_zone_matrix.csv -> zone_data/ (override='zone_data')
+2026-06-12 14:08:51 INFO     127.0.0.1 - - [12/Jun/2026 14:08:51] "POST /transporter/vgf/upload HTTP/1.1" 200 -
+2026-06-12 14:08:51 INFO     127.0.0.1 - - [12/Jun/2026 14:08:51] "GET /transporter/vgf/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 14:10:41 INFO     127.0.0.1 - - [12/Jun/2026 14:10:41] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 14:10:41 INFO     127.0.0.1 - - [12/Jun/2026 14:10:41] "GET /output/vgf/download HTTP/1.1" 200 -
+2026-06-12 14:10:41 INFO     127.0.0.1 - - [12/Jun/2026 14:10:41] "GET /output/vgf/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 14:21:28 INFO     127.0.0.1 - - [12/Jun/2026 14:21:28] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 14:21:28 INFO     127.0.0.1 - - [12/Jun/2026 14:21:28] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-12 14:21:28 INFO     127.0.0.1 - - [12/Jun/2026 14:21:28] "GET /transporter/fefe HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_charges.pdf -> charges/ (override='charges')
+2026-06-12 14:21:28 INFO     127.0.0.1 - - [12/Jun/2026 14:21:28] "POST /transporter/fefe/upload HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 14:21:28 INFO     127.0.0.1 - - [12/Jun/2026 14:21:28] "POST /transporter/fefe/upload HTTP/1.1" 200 -
+[Upload] slowpoke_surface_cargo_zone_matrix.csv -> zone_data/ (override='zone_data')
+2026-06-12 14:21:28 INFO     127.0.0.1 - - [12/Jun/2026 14:21:28] "POST /transporter/fefe/upload HTTP/1.1" 200 -
+2026-06-12 14:21:29 INFO     127.0.0.1 - - [12/Jun/2026 14:21:29] "GET /transporter/fefe/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 14:23:44 INFO     127.0.0.1 - - [12/Jun/2026 14:23:44] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 14:23:44 INFO     127.0.0.1 - - [12/Jun/2026 14:23:44] "GET /output/fefe/download HTTP/1.1" 200 -
+2026-06-12 14:23:44 INFO     127.0.0.1 - - [12/Jun/2026 14:23:44] "GET /output/fefe/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 14:39:29 INFO     127.0.0.1 - - [12/Jun/2026 14:39:29] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 14:39:29 INFO     127.0.0.1 - - [12/Jun/2026 14:39:29] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-12 14:39:29 INFO     127.0.0.1 - - [12/Jun/2026 14:39:29] "GET /transporter/vbnm HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_charges.docx -> charges/ (override='charges')
+2026-06-12 14:39:29 INFO     127.0.0.1 - - [12/Jun/2026 14:39:29] "POST /transporter/vbnm/upload HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 14:39:29 INFO     127.0.0.1 - - [12/Jun/2026 14:39:29] "POST /transporter/vbnm/upload HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 14:39:29 INFO     127.0.0.1 - - [12/Jun/2026 14:39:29] "POST /transporter/vbnm/upload HTTP/1.1" 200 -
+2026-06-12 14:39:29 INFO     127.0.0.1 - - [12/Jun/2026 14:39:29] "GET /transporter/vbnm/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 14:40:49 INFO     127.0.0.1 - - [12/Jun/2026 14:40:49] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 14:40:49 INFO     127.0.0.1 - - [12/Jun/2026 14:40:49] "GET /output/vbnm/download HTTP/1.1" 200 -
+2026-06-12 14:40:49 INFO     127.0.0.1 - - [12/Jun/2026 14:40:49] "GET /output/vbnm/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 14:44:02 INFO     127.0.0.1 - - [12/Jun/2026 14:44:02] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 14:44:02 INFO     127.0.0.1 - - [12/Jun/2026 14:44:02] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-12 14:44:02 INFO     127.0.0.1 - - [12/Jun/2026 14:44:02] "GET /transporter/plbhg HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_charges.docx -> charges/ (override='charges')
+2026-06-12 14:44:02 INFO     127.0.0.1 - - [12/Jun/2026 14:44:02] "POST /transporter/plbhg/upload HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 14:44:02 INFO     127.0.0.1 - - [12/Jun/2026 14:44:02] "POST /transporter/plbhg/upload HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 14:44:02 INFO     127.0.0.1 - - [12/Jun/2026 14:44:02] "POST /transporter/plbhg/upload HTTP/1.1" 200 -
+2026-06-12 14:44:02 INFO     127.0.0.1 - - [12/Jun/2026 14:44:02] "GET /transporter/plbhg/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 14:45:20 INFO     127.0.0.1 - - [12/Jun/2026 14:45:20] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 14:45:20 INFO     127.0.0.1 - - [12/Jun/2026 14:45:20] "GET /output/plbhg/download HTTP/1.1" 200 -
+2026-06-12 14:45:20 INFO     127.0.0.1 - - [12/Jun/2026 14:45:20] "GET /output/plbhg/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 15:00:21 INFO     127.0.0.1 - - [12/Jun/2026 15:00:21] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 15:00:21 INFO     127.0.0.1 - - [12/Jun/2026 15:00:21] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-12 15:00:21 INFO     127.0.0.1 - - [12/Jun/2026 15:00:21] "GET /transporter/kanjo HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_charges.docx -> charges/ (override='charges')
+2026-06-12 15:00:22 INFO     127.0.0.1 - - [12/Jun/2026 15:00:22] "POST /transporter/kanjo/upload HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 15:00:22 INFO     127.0.0.1 - - [12/Jun/2026 15:00:22] "POST /transporter/kanjo/upload HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 15:00:22 INFO     127.0.0.1 - - [12/Jun/2026 15:00:22] "POST /transporter/kanjo/upload HTTP/1.1" 200 -
+2026-06-12 15:00:22 INFO     127.0.0.1 - - [12/Jun/2026 15:00:22] "GET /transporter/kanjo/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 15:01:43 INFO     127.0.0.1 - - [12/Jun/2026 15:01:43] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 15:01:43 INFO     127.0.0.1 - - [12/Jun/2026 15:01:43] "GET /output/kanjo/download HTTP/1.1" 200 -
+2026-06-12 15:01:43 INFO     127.0.0.1 - - [12/Jun/2026 15:01:43] "GET /output/kanjo/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 15:05:18 INFO     127.0.0.1 - - [12/Jun/2026 15:05:18] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 15:05:18 INFO     127.0.0.1 - - [12/Jun/2026 15:05:18] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-12 15:05:18 INFO     127.0.0.1 - - [12/Jun/2026 15:05:18] "GET /transporter/kanjoos HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_charges.docx -> charges/ (override='charges')
+2026-06-12 15:05:18 INFO     127.0.0.1 - - [12/Jun/2026 15:05:18] "POST /transporter/kanjoos/upload HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 15:05:18 INFO     127.0.0.1 - - [12/Jun/2026 15:05:18] "POST /transporter/kanjoos/upload HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 15:05:18 INFO     127.0.0.1 - - [12/Jun/2026 15:05:18] "POST /transporter/kanjoos/upload HTTP/1.1" 200 -
+2026-06-12 15:05:18 INFO     127.0.0.1 - - [12/Jun/2026 15:05:18] "GET /transporter/kanjoos/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 15:06:33 INFO     127.0.0.1 - - [12/Jun/2026 15:06:33] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 15:06:33 INFO     127.0.0.1 - - [12/Jun/2026 15:06:33] "GET /output/kanjoos/download HTTP/1.1" 200 -
+2026-06-12 15:06:33 INFO     127.0.0.1 - - [12/Jun/2026 15:06:33] "GET /output/kanjoos/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 15:07:50 INFO     127.0.0.1 - - [12/Jun/2026 15:07:50] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 15:07:50 INFO     127.0.0.1 - - [12/Jun/2026 15:07:50] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-12 15:07:50 INFO     127.0.0.1 - - [12/Jun/2026 15:07:50] "GET /transporter/kanjoos HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_charges.docx -> charges/ (override='charges')
+2026-06-12 15:07:50 INFO     127.0.0.1 - - [12/Jun/2026 15:07:50] "POST /transporter/kanjoos/upload HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 15:07:50 INFO     127.0.0.1 - - [12/Jun/2026 15:07:50] "POST /transporter/kanjoos/upload HTTP/1.1" 200 -
+[Upload] kanjoos_kargo_kings_zone_matrix.xlsx -> zone_data/ (override='zone_data')
+2026-06-12 15:07:50 INFO     127.0.0.1 - - [12/Jun/2026 15:07:50] "POST /transporter/kanjoos/upload HTTP/1.1" 200 -
+2026-06-12 15:07:50 INFO     127.0.0.1 - - [12/Jun/2026 15:07:50] "GET /transporter/kanjoos/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 15:09:20 INFO     127.0.0.1 - - [12/Jun/2026 15:09:20] "GET /api/status HTTP/1.1" 200 -
+2026-06-12 15:09:20 INFO     127.0.0.1 - - [12/Jun/2026 15:09:20] "GET /output/kanjoos/download HTTP/1.1" 200 -
+2026-06-12 15:09:20 INFO     127.0.0.1 - - [12/Jun/2026 15:09:20] "GET /output/kanjoos/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-12 15:11:50 INFO     127.0.0.1 - - [12/Jun/2026 15:11:50] "GET /api/status HTTP/1.1" 200 -

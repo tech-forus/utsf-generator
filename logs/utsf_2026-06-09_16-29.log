@@ -1,0 +1,71 @@
+[UTSF] Log file: C:\Users\tech\Downloads\09-06-2026\utsf-generator\logs\utsf_2026-06-09_16-29.log
+ * Serving Flask app 'web.app'
+ * Debug mode: off
+2026-06-09 16:29:42 INFO     [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-06-09 16:29:42 INFO     [33mPress CTRL+C to quit[0m
+2026-06-09 16:29:44 INFO     127.0.0.1 - - [09/Jun/2026 16:29:44] "GET / HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-09 16:29:46 INFO     127.0.0.1 - - [09/Jun/2026 16:29:46] "GET /api/status HTTP/1.1" 200 -
+2026-06-09 16:30:13 INFO     127.0.0.1 - - [09/Jun/2026 16:30:13] "[33mGET /api/health HTTP/1.1[0m" 404 -
+2026-06-09 16:30:29 INFO     127.0.0.1 - - [09/Jun/2026 16:30:29] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-09 16:59:51 INFO     127.0.0.1 - - [09/Jun/2026 16:59:51] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Error: [WinError 10054] An existing connection was forcibly closed by the remote host
+2026-06-09 17:12:01 INFO     127.0.0.1 - - [09/Jun/2026 17:12:01] "GET /api/status HTTP/1.1" 200 -
+2026-06-09 17:12:36 INFO     127.0.0.1 - - [09/Jun/2026 17:12:36] "GET /api/status HTTP/1.1" 200 -
+2026-06-09 17:12:37 INFO     127.0.0.1 - - [09/Jun/2026 17:12:37] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-09 17:12:37 INFO     127.0.0.1 - - [09/Jun/2026 17:12:37] "GET /transporter/docket_diabetes_2 HTTP/1.1" 200 -
+[Upload] docket_diabetes_transport_charges.docx -> charges/ (override='charges')
+2026-06-09 17:12:37 INFO     127.0.0.1 - - [09/Jun/2026 17:12:37] "POST /transporter/docket_diabetes_2/upload HTTP/1.1" 200 -
+[Upload] docket_diabetes_transport_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-09 17:12:37 INFO     127.0.0.1 - - [09/Jun/2026 17:12:37] "POST /transporter/docket_diabetes_2/upload HTTP/1.1" 200 -
+[Upload] docket_diabetes_transport_zone_matrix.csv -> zone_data/ (override='zone_data')
+2026-06-09 17:12:37 INFO     127.0.0.1 - - [09/Jun/2026 17:12:37] "POST /transporter/docket_diabetes_2/upload HTTP/1.1" 200 -
+2026-06-09 17:12:37 INFO     127.0.0.1 - - [09/Jun/2026 17:12:37] "GET /transporter/docket_diabetes_2/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-09 17:13:59 INFO     127.0.0.1 - - [09/Jun/2026 17:13:59] "GET /api/status HTTP/1.1" 200 -
+2026-06-09 17:13:59 INFO     127.0.0.1 - - [09/Jun/2026 17:13:59] "GET /output/docket_diabetes_2/download HTTP/1.1" 200 -
+2026-06-09 17:13:59 INFO     127.0.0.1 - - [09/Jun/2026 17:13:59] "GET /output/docket_diabetes_2/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-09 17:30:30 INFO     127.0.0.1 - - [09/Jun/2026 17:30:30] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-09 17:42:10 INFO     127.0.0.1 - - [09/Jun/2026 17:42:10] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-09 17:44:37 INFO     127.0.0.1 - - [09/Jun/2026 17:44:37] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-09 17:49:36 INFO     127.0.0.1 - - [09/Jun/2026 17:49:36] "GET /api/status HTTP/1.1" 200 -
+2026-06-09 17:49:36 INFO     127.0.0.1 - - [09/Jun/2026 17:49:36] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-09 17:49:36 INFO     127.0.0.1 - - [09/Jun/2026 17:49:36] "GET /transporter/sabse_pehel_price HTTP/1.1" 200 -
+[Upload] sabse_pehle_price_pvt_ltd_charges.pdf -> charges/ (override='charges')
+2026-06-09 17:49:36 INFO     127.0.0.1 - - [09/Jun/2026 17:49:36] "POST /transporter/sabse_pehel_price/upload HTTP/1.1" 200 -
+[Upload] sabse_pehle_price_pvt_ltd_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-09 17:49:36 INFO     127.0.0.1 - - [09/Jun/2026 17:49:36] "POST /transporter/sabse_pehel_price/upload HTTP/1.1" 200 -
+[Upload] sabse_pehle_price_pvt_ltd_zone_matrix.csv -> zone_data/ (override='zone_data')
+2026-06-09 17:49:37 INFO     127.0.0.1 - - [09/Jun/2026 17:49:37] "POST /transporter/sabse_pehel_price/upload HTTP/1.1" 200 -
+2026-06-09 17:49:37 INFO     127.0.0.1 - - [09/Jun/2026 17:49:37] "GET /transporter/sabse_pehel_price/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-09 17:50:44 INFO     127.0.0.1 - - [09/Jun/2026 17:50:44] "GET /api/status HTTP/1.1" 200 -
+2026-06-09 17:50:44 INFO     127.0.0.1 - - [09/Jun/2026 17:50:44] "GET /output/sabse_pehel_price/download HTTP/1.1" 200 -
+2026-06-09 17:50:44 INFO     127.0.0.1 - - [09/Jun/2026 17:50:44] "GET /output/sabse_pehel_price/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-09 18:19:28 INFO     127.0.0.1 - - [09/Jun/2026 18:19:28] "GET /api/status HTTP/1.1" 200 -
+2026-06-09 18:19:28 INFO     127.0.0.1 - - [09/Jun/2026 18:19:28] "[32mPOST /transporter/create HTTP/1.1[0m" 302 -
+2026-06-09 18:19:28 INFO     127.0.0.1 - - [09/Jun/2026 18:19:28] "GET /transporter/docket_diabtes HTTP/1.1" 200 -
+[Upload] docket_diabetes_transport_charges.docx -> charges/ (override='charges')
+2026-06-09 18:19:28 INFO     127.0.0.1 - - [09/Jun/2026 18:19:28] "POST /transporter/docket_diabtes/upload HTTP/1.1" 200 -
+[Upload] docket_diabetes_transport_serviceability.xlsx -> zone_data/ (override='zone_data')
+2026-06-09 18:19:28 INFO     127.0.0.1 - - [09/Jun/2026 18:19:28] "POST /transporter/docket_diabtes/upload HTTP/1.1" 200 -
+[Upload] docket_diabetes_transport_zone_matrix.csv -> zone_data/ (override='zone_data')
+2026-06-09 18:19:28 INFO     127.0.0.1 - - [09/Jun/2026 18:19:28] "POST /transporter/docket_diabtes/upload HTTP/1.1" 200 -
+2026-06-09 18:19:28 INFO     127.0.0.1 - - [09/Jun/2026 18:19:28] "GET /transporter/docket_diabtes/generate HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-09 18:22:02 INFO     127.0.0.1 - - [09/Jun/2026 18:22:02] "GET /api/status HTTP/1.1" 200 -
+2026-06-09 18:22:02 INFO     127.0.0.1 - - [09/Jun/2026 18:22:02] "GET /output/docket_diabtes/download HTTP/1.1" 200 -
+2026-06-09 18:22:02 INFO     127.0.0.1 - - [09/Jun/2026 18:22:02] "GET /output/docket_diabtes/download HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-10 10:47:57 INFO     127.0.0.1 - - [10/Jun/2026 10:47:57] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-10 11:13:38 INFO     127.0.0.1 - - [10/Jun/2026 11:13:38] "GET /api/status HTTP/1.1" 200 -
+[Ollama] Connection error: HTTP Error 405: Method Not Allowed
+2026-06-10 15:24:58 INFO     127.0.0.1 - - [10/Jun/2026 15:24:58] "GET /api/status HTTP/1.1" 200 -

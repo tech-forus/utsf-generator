@@ -4,145 +4,145 @@
       "type": "charge",
       "raw": "topayCharges",
       "canonical": "topayCharges",
-      "confirmations": 17.5,
+      "confirmations": 18.0,
       "corrections": 0,
       "confidence": 0.95,
       "auto_promoted": true,
       "passive": true,
       "first_seen": 1781075979.1344233,
-      "last_seen": 1781265278.6977882
+      "last_seen": 1782128900.595892
     },
     "charge||divisor||divisor": {
       "type": "charge",
       "raw": "divisor",
       "canonical": "divisor",
-      "confirmations": 17.5,
+      "confirmations": 18.0,
       "corrections": 0,
       "confidence": 0.95,
       "auto_promoted": true,
       "passive": true,
       "first_seen": 1781075979.1388865,
-      "last_seen": 1781265278.698795
+      "last_seen": 1782128900.595892
     },
     "charge||codcharges||codCharges": {
       "type": "charge",
       "raw": "codCharges",
       "canonical": "codCharges",
-      "confirmations": 17.5,
+      "confirmations": 18.0,
       "corrections": 0,
       "confidence": 0.95,
       "auto_promoted": true,
       "passive": true,
       "first_seen": 1781075979.1437786,
-      "last_seen": 1781265278.7013283
+      "last_seen": 1782128900.5998034
     },
     "charge||docketcharges||docketCharges": {
       "type": "charge",
       "raw": "docketCharges",
       "canonical": "docketCharges",
-      "confirmations": 19.0,
+      "confirmations": 20.0,
       "corrections": 0,
       "confidence": 0.95,
       "auto_promoted": true,
       "passive": true,
       "first_seen": 1781075979.5665028,
-      "last_seen": 1781265278.686979
+      "last_seen": 1782297535.3144884
     },
     "charge||fuel||fuel": {
       "type": "charge",
       "raw": "fuel",
       "canonical": "fuel",
-      "confirmations": 18.5,
+      "confirmations": 19.5,
       "corrections": 0,
       "confidence": 0.95,
       "auto_promoted": true,
       "passive": true,
       "first_seen": 1781075979.5710974,
-      "last_seen": 1781265278.6884546
+      "last_seen": 1782297535.3144884
     },
     "charge||minweight||minWeight": {
       "type": "charge",
       "raw": "minWeight",
       "canonical": "minWeight",
-      "confirmations": 18.5,
+      "confirmations": 19.5,
       "corrections": 0,
       "confidence": 0.95,
       "auto_promoted": true,
       "passive": true,
       "first_seen": 1781075979.5739422,
-      "last_seen": 1781265278.6884546
+      "last_seen": 1782297535.3144884
     },
     "charge||mincharges||minCharges": {
       "type": "charge",
       "raw": "minCharges",
       "canonical": "minCharges",
-      "confirmations": 18.5,
+      "confirmations": 19.5,
       "corrections": 0,
       "confidence": 0.95,
       "auto_promoted": true,
       "passive": true,
       "first_seen": 1781075979.5794232,
-      "last_seen": 1781265278.6931303
+      "last_seen": 1782297535.3215294
     },
     "charge||greentax||greenTax": {
       "type": "charge",
       "raw": "greenTax",
       "canonical": "greenTax",
-      "confirmations": 18.5,
+      "confirmations": 19.0,
       "corrections": 0,
       "confidence": 0.95,
       "auto_promoted": true,
       "passive": true,
       "first_seen": 1781075979.5830922,
-      "last_seen": 1781265278.694167
+      "last_seen": 1782128900.5888915
     },
     "charge||dacccharges||daccCharges": {
       "type": "charge",
       "raw": "daccCharges",
       "canonical": "daccCharges",
-      "confirmations": 14.5,
+      "confirmations": 15.0,
       "corrections": 0,
       "confidence": 0.95,
       "auto_promoted": true,
       "passive": true,
       "first_seen": 1781075979.5865731,
-      "last_seen": 1781254289.4050229
+      "last_seen": 1782128900.5888915
     },
     "charge||rovcharges||rovCharges": {
       "type": "charge",
       "raw": "rovCharges",
       "canonical": "rovCharges",
-      "confirmations": 18.5,
+      "confirmations": 19.0,
       "corrections": 0,
       "confidence": 0.95,
       "auto_promoted": true,
       "passive": true,
       "first_seen": 1781075979.58916,
-      "last_seen": 1781265278.695167
+      "last_seen": 1782128900.5928347
     },
     "charge||odacharges||odaCharges": {
       "type": "charge",
       "raw": "odaCharges",
       "canonical": "odaCharges",
-      "confirmations": 17.0,
+      "confirmations": 17.5,
       "corrections": 0,
       "confidence": 0.95,
       "auto_promoted": true,
       "passive": true,
       "first_seen": 1781075979.5925152,
-      "last_seen": 1781265278.6961682
+      "last_seen": 1782128900.594894
     },
     "charge||insurancecharges||insuranceCharges": {
       "type": "charge",
       "raw": "insuranceCharges",
       "canonical": "insuranceCharges",
-      "confirmations": 2.0,
+      "confirmations": 2.5,
       "corrections": 0,
-      "confidence": 0.68679625,
+      "confidence": 0.7337768125,
       "auto_promoted": false,
       "passive": true,
       "first_seen": 1781076176.4031203,
-      "last_seen": 1781076560.7337012
+      "last_seen": 1782128900.5939026
     },
     "zone||new delhi||[\"N1\"]": {
       "type": "zone",
@@ -162,13 +162,13 @@
       "type": "charge",
       "raw": "odaMatrix",
       "canonical": "odaMatrix",
-      "confirmations": 10.5,
+      "confirmations": 11.0,
       "corrections": 0,
       "confidence": 0.95,
       "auto_promoted": true,
       "passive": true,
       "first_seen": 1781088965.597401,
-      "last_seen": 1781265278.699832
+      "last_seen": 1782128900.595892
     }
   },
   "stats": {

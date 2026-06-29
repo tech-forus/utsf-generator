@@ -1780,6 +1780,56 @@ def import_input_data(folder_name: str):
     })
 
 
+# ─── Routes: Targeted Partial Extraction ──────────────────────────────────────
+
+@app.post("/api/extract-partial")
+def extract_partial_utsf():
+    """
+    Fast-track targeted extraction for Edit Vendor auto-fill.
+    Accepts a single file, parses it, and uses FC4Encoder to build ONLY the 
+    serviceability, ODA, and zoneRates blocks. Returns the partial UTSF JSON 
+    instantly without merging or AI fallbacks.
+    """
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "No file uploaded"}), 400
+        
+    f = request.files["file"]
+    if not f.filename or not allowed_file(f.filename):
+        return jsonify({"ok": False, "error": "Invalid or missing file"}), 400
+        
+    safe_fn = secure_filename(f.filename)
+    
+    # Save to temp directory
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = os.path.join(temp_dir, safe_fn)
+        f.save(temp_path)
+        
+        try:
+            # 1. Parse file
+            from main import get_parser_for_file, PINCODES_PATH, ZONES_PATH
+            parser, precomputed_result = get_parser_for_file(temp_path)
+            if not parser:
+                return jsonify({"ok": False, "error": "Unsupported file format"}), 400
+                
+            default_origin_pincode = request.form.get("default_origin_pincode")
+            result = precomputed_result if precomputed_result else parser.parse(temp_path, default_origin_pincode=default_origin_pincode)
+            raw_data = result.get("data", {})
+            
+            # 2. Extract specific arrays needed for serviceability/pricing
+            # FC4Encoder handles building the full structure based on what's present
+            from builder.fc4_encoder import FC4Encoder
+            encoder = FC4Encoder(PINCODES_PATH, ZONES_PATH)
+            
+            partial_utsf = encoder.encode(raw_data, source_files=[safe_fn], transporter_id="partial_extract")
+            
+            return jsonify({"ok": True, "utsf": partial_utsf})
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({"ok": False, "error": f"Extraction failed: {str(e)}"}), 500
+
+
 # ─── Template filters ─────────────────────────────────────────────────────────
 
 @app.template_filter("quality_color")

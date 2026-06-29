@@ -887,17 +887,17 @@ def _parse_vf_from_row(row: List, start_col: int = 1) -> Dict:
 class ExcelParser(BaseParser):
     SUPPORTED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".tsv"]
 
-    def parse(self, file_path: str, doc_context=None) -> Dict[str, Any]:
+    def parse(self, file_path: str, doc_context=None, **kwargs) -> Dict[str, Any]:
         ext = os.path.splitext(file_path)[1].lower()
         if ext in (".csv", ".tsv"):
-            return self._parse_csv(file_path)
-        return self._parse_excel(file_path)
+            return self._parse_csv(file_path, **kwargs)
+        return self._parse_excel(file_path, **kwargs)
 
     # ------------------------------------------------------------------
     # Top-level file readers
     # ------------------------------------------------------------------
 
-    def _parse_excel(self, file_path: str) -> Dict[str, Any]:
+    def _parse_excel(self, file_path: str, **kwargs) -> Dict[str, Any]:
         fname = os.path.basename(file_path)
         print(f"[ExcelParser] Parsing: {fname}")
 
@@ -963,11 +963,11 @@ class ExcelParser(BaseParser):
                 text += "\t".join(row) + "\n"
             tables.append({"name": sname, "rows": rows})
 
-        data = self._auto_detect(sheets)
+        data = self._auto_detect(sheets, **kwargs)
 
         return {"text": text, "tables": tables, "data": data}
 
-    def _parse_csv(self, file_path: str) -> Dict[str, Any]:
+    def _parse_csv(self, file_path: str, **kwargs) -> Dict[str, Any]:
         fname = os.path.basename(file_path)
         print(f"[ExcelParser] Parsing CSV: {fname}")
 
@@ -990,14 +990,14 @@ class ExcelParser(BaseParser):
 
         text = "\n".join("\t".join(row) for row in rows[:200])
         sheets = {fname: rows}
-        data = self._auto_detect(sheets)
+        data = self._auto_detect(sheets, **kwargs)
         return {"text": text, "tables": [{"name": fname, "rows": rows}], "data": data}
 
     # ------------------------------------------------------------------
     # Auto-detection dispatcher
     # ------------------------------------------------------------------
 
-    def _auto_detect(self, sheets: Dict[str, List[List]]) -> Dict:
+    def _auto_detect(self, sheets: Dict[str, List[List]], **kwargs) -> Dict:
         """
         Classify each sheet and extract structured data.
         Important: does NOT bail on first match — charges are extracted
@@ -1120,6 +1120,9 @@ class ExcelParser(BaseParser):
                         f"SERVICEABILITY ({len(pinlist['served'])} pincodes, "
                         f"{len(pinlist['oda'])} ODA)"
                     )
+                    if pinlist.get("rates"):
+                        detected.setdefault("rates", {})
+                        detected["rates"].update(pinlist["rates"])
 
             # 3. Charges — section-aware extraction
             # Segment rows into typed sections so VOLUMETRIC rows don't
@@ -1274,6 +1277,27 @@ class ExcelParser(BaseParser):
                       f"{list(detected['zone_pincodes'].keys())}")
             except Exception as e:
                 print(f"[ExcelParser] ZoneResolver error: {e}")
+
+        # --- Fallback: Build Zone Matrix from default origin pincode if no matrix exists ---
+        if not detected.get("zone_matrix") and kwargs.get("default_origin_pincode") and detected.get("rates"):
+            default_origin = kwargs.get("default_origin_pincode")
+            origin_zone = gv.lookup_zone(int(default_origin)) if gv and default_origin else None
+            if origin_zone:
+                zm: Dict[str, Dict[str, List[float]]] = {origin_zone: {}}
+                for pin, rate in detected["rates"].items():
+                    dest_zone = gv.lookup_zone(pin) if gv else None
+                    if dest_zone:
+                        if dest_zone not in zm[origin_zone]:
+                            zm[origin_zone][dest_zone] = []
+                        zm[origin_zone][dest_zone].append(rate)
+                
+                if zm[origin_zone]:
+                    import statistics
+                    final_zm: Dict[str, Dict[str, float]] = {origin_zone: {}}
+                    for dest, rates_list in zm[origin_zone].items():
+                        final_zm[origin_zone][dest] = round(statistics.median(rates_list), 2)
+                    detected["zone_matrix"] = final_zm
+                    print(f"[ExcelParser] Built default zone matrix using origin pincode {default_origin} ({origin_zone}) -> {len(final_zm[origin_zone])} dest zones.")
 
         detected["_parseAudit"] = list(_PARSE_AUDIT)
         return detected
@@ -1698,6 +1722,7 @@ class ExcelParser(BaseParser):
         cod_col = None
         state_col = None
         city_col = None
+        rate_col = None
 
         # Expanded set of pincode header names
         _PIN_HEADER_EXACT = {
@@ -1754,6 +1779,8 @@ class ExcelParser(BaseParser):
                         state_col = ci
                     elif h in _CITY_NAMES:
                         city_col = ci
+                    elif any(kw in h for kw in self._LF_RATE_PATTERNS) or "safeexpress" in h:
+                        rate_col = ci
                     if ("zone" in h) and zone_col is None and ci != pin_col:
                         zone_col = ci
                         print(f"[Excel:{sheet_name}] Zone col: {ci} ('{h}')")
@@ -1821,6 +1848,7 @@ class ExcelParser(BaseParser):
         # cleanup — normalisation policy is centralised at the promotion site
         # so it can evolve without touching every parser.
         geo_hints: Dict[int, Tuple[str, str]] = {}
+        rates: Dict[int, float] = {}
         skipped = 0
 
         has_delivery_col = delivery_col is not None
@@ -1904,6 +1932,11 @@ class ExcelParser(BaseParser):
                 _state_raw = _cell_str(row[state_col]).strip() if state_col < len(row) else ""
                 if _city_raw and _state_raw:
                     geo_hints[pin] = (_city_raw, _state_raw)
+                    
+            if rate_col is not None and rate_col < len(row):
+                rate_val = _safe_float(row[rate_col])
+                if rate_val is not None and rate_val > 0:
+                    rates[pin] = rate_val
 
             # Zone assignment
             if zone_col is not None and zone_col < len(row):
@@ -1939,6 +1972,9 @@ class ExcelParser(BaseParser):
             result["pincode_geo_hints"] = geo_hints
             print(f"[Excel:{sheet_name}]   Captured city/state hints for {len(geo_hints)} pincodes "
                   f"(city_col={city_col}, state_col={state_col})")
+        if rates:
+            result["rates"] = rates
+            print(f"[Excel:{sheet_name}]   Captured flat rates for {len(rates)} pincodes (rate_col={rate_col})")
         return result
 
     # ------------------------------------------------------------------

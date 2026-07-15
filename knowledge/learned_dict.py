@@ -26,6 +26,30 @@ LEARNED_CHARGES = {
     'insurancecharges': 'insuranceCharges',
 
     'odamatrix': 'odaMatrix',
+
+    'noida': 'odaCharges',
+
+    'gonda': 'odaCharges',
+
+    'dahod': 'dodCharges',
+
+    'nowda': 'odaCharges',
+
+    'kedla': 'odaCharges',
+
+    'goindwal': 'odaCharges',
+
+    'godhra': 'odaCharges',
+
+    'nalgonda': 'odaCharges',
+
+    'gondal': 'odaCharges',
+
+    'dabhoi': 'dodCharges',
+
+    'bhopal': 'odaCharges',
+
+    'kodala': 'odaCharges',
 }
 
 LEARNED_ZONES = {

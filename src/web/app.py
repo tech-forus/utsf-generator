@@ -425,14 +425,29 @@ def create_transporter():
         return redirect(url_for("dashboard"))
     safe = _safe_name(name).replace(" ", "_")
     folder = os.path.join(TRANSPORTERS, safe)
+
+    # Wipe any documents left over from a previous run under this same company
+    # name — the folder is keyed purely by name, so without this a fresh
+    # upload (e.g. just a pincode sheet) silently gets merged with whatever
+    # charges/company_details files an earlier test/session dropped in here,
+    # and the extraction summary shows GST/pricing/etc. that were never in
+    # today's upload. The stable transporter ID is preserved across the wipe
+    # so re-running extraction for an already-imported vendor doesn't spawn a
+    # duplicate record.
+    existing_tid = None
+    id_file = os.path.join(folder, ".transporter_id")
+    if os.path.isfile(id_file):
+        with open(id_file) as f:
+            existing_tid = f.read().strip() or None
+    if os.path.isdir(folder):
+        import shutil
+        shutil.rmtree(folder)
+
     for sub in SUBFOLDERS:
         os.makedirs(os.path.join(folder, sub), exist_ok=True)
-    # Assign a unique ID if not already assigned
-    id_file = os.path.join(folder, ".transporter_id")
-    if not os.path.exists(id_file):
-        tid = _next_transporter_id()
-        with open(id_file, "w") as f:
-            f.write(tid)
+    tid = existing_tid or _next_transporter_id()
+    with open(id_file, "w") as f:
+        f.write(tid)
 
     # Persist any meta fields supplied at creation time into company_meta.json.
     # The parser merge pipeline reads this JSON automatically — no special wiring needed.

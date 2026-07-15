@@ -26,6 +26,7 @@ import argparse
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor
 
 from knowledge.charge_richness import charge_num as _charge_num, charge_richness as _charge_richness
 
@@ -67,6 +68,34 @@ ZONES_PATH    = os.path.join(DATA_DIR, "zones_data.json")
 
 DIVIDER      = "=" * 60
 SUB_DIVIDER  = "-" * 52
+
+# Multi-word phrases that only show up in an actual freight *charges* document
+# (docket/fuel/ROV/handling/etc line items). Deliberately excludes bare
+# single words like "oda" or "cod" — those collide with unrelated columns
+# (e.g. a plain "ODA" Yes/No serviceability flag), which is exactly how a
+# pincode-only sheet with no charges at all previously got the AI charges
+# extractor invoked on it and produced a fabricated ODA% that matched nothing
+# in the source file. If none of these phrases appear anywhere in the
+# document text, there is no charges data to extract, and the AI must not be
+# asked to invent one.
+_CHARGE_EVIDENCE_PHRASES = [
+    "docket charge", "docket fee", "fuel surcharge", "fuel charge", "fsc",
+    "minimum charge", "min charge", "minimum freight", "min freight",
+    "rov charge", "risk of value", "owner's risk", "owners risk", "fov charge",
+    "insurance charge", "oda charge", "oda charges", "out of delivery area",
+    "out-of-delivery", "remote area charge", "special area charge",
+    "handling charge", "green tax", "dacc charge", "dacc",
+    "cod charge", "cash on delivery charge", "appointment charge",
+    "topay charge", "to-pay charge", "to pay charge", "prepaid charge",
+    "misc charge", "miscellaneous charge", "other charges",
+]
+
+
+def _has_charge_evidence(text: str) -> bool:
+    """True only if the raw document text contains an actual charge-line-item
+    phrase — see _CHARGE_EVIDENCE_PHRASES for why this must be multi-word."""
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _CHARGE_EVIDENCE_PHRASES)
 
 
 def get_parser_for_file(file_path: str):
@@ -634,20 +663,42 @@ def generate_utsf_for_transporter(
                                       f"{list(ai_data.keys())[:6]}")
 
                         elif "charge" in folder_type or "rate" in folder_type:
-                            # Always attempt zone matrix extraction FIRST for charge/rate
-                            # files — rate cards (like "Book2 cade rate.xlsx") contain the
-                            # zone price matrix even though they land in "charges" folder.
-                            if not extracted_pieces[-1].get("zone_matrix"):
-                                ai_zm = extractor.extract_zone_matrix(result["text"])
-                                if ai_zm:
-                                    extracted_pieces[-1]["zone_matrix"] = ai_zm
-                                    print(f"    AI extracted zone matrix from charges file: "
-                                          f"{len(ai_zm)} origins")
-                            # Also extract charge fields
-                            ai_data = extractor.extract_charges(result["text"])
-                            if ai_data:
-                                extracted_pieces[-1]["charges"] = ai_data
-                                print(f"    AI extracted charges: {list(ai_data.keys())[:6]}")
+                            # Zone-matrix and charges extraction are two independent
+                            # LLM calls (different prompts, same source text) — run them
+                            # concurrently instead of back-to-back. This does NOT help if
+                            # the Ollama server only has one inference slot (most local/
+                            # single-GPU setups serialize regardless of how many requests
+                            # arrive at once), but it does overlap our own HTTP round-trip
+                            # and JSON handling, and it's a real win once OLLAMA_NUM_PARALLEL
+                            # is configured on the server side.
+                            want_zone_matrix = not extracted_pieces[-1].get("zone_matrix")
+                            # Also extract charge fields — but only if the document
+                            # actually contains charge-line-item language. Files that
+                            # land in "charges"/"rate" purely by filename-guessing
+                            # (e.g. a pincode+zone-price sheet with no recognizable
+                            # name) have no charges to find, and asking the AI anyway
+                            # produces fabricated numbers instead of an honest "none".
+                            want_charges = _has_charge_evidence(result["text"])
+
+                            if want_zone_matrix or want_charges:
+                                with ThreadPoolExecutor(max_workers=2) as pool:
+                                    zm_future = pool.submit(extractor.extract_zone_matrix, result["text"]) if want_zone_matrix else None
+                                    charges_future = pool.submit(extractor.extract_charges, result["text"]) if want_charges else None
+
+                                    if zm_future:
+                                        ai_zm = zm_future.result()
+                                        if ai_zm:
+                                            extracted_pieces[-1]["zone_matrix"] = ai_zm
+                                            print(f"    AI extracted zone matrix from charges file: "
+                                                  f"{len(ai_zm)} origins")
+                                    if charges_future:
+                                        ai_data = charges_future.result()
+                                        if ai_data:
+                                            extracted_pieces[-1]["charges"] = ai_data
+                                            print(f"    AI extracted charges: {list(ai_data.keys())[:6]}")
+                            else:
+                                print("    Skipping AI charge extraction — no charge-related "
+                                      "text found in this document")
 
                         elif "zone" in folder_type:
                             if not extracted_pieces[-1].get("zone_matrix"):
@@ -663,7 +714,7 @@ def generate_utsf_for_transporter(
                                 print(f"    AI extracted serviceability: "
                                       f"{len(ai_svc['served_pincodes']):,} pincodes")
                         else:
-                            if not extracted_pieces[-1]:
+                            if not extracted_pieces[-1] and _has_charge_evidence(result["text"]):
                                 ai_data = extractor.extract_charges(result["text"])
                                 if ai_data:
                                     extracted_pieces[-1]["charges"] = ai_data

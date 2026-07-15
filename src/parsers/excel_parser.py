@@ -1123,6 +1123,15 @@ class ExcelParser(BaseParser):
                     if pinlist.get("rates"):
                         detected.setdefault("rates", {})
                         detected["rates"].update(pinlist["rates"])
+                    if pinlist.get("zone_matrix"):
+                        # Merge (not overwrite) — an earlier pass (_try_parse_zone_matrix /
+                        # long-format) may have already found a fuller matrix; this
+                        # side-table-derived one only fills in what's still missing.
+                        detected.setdefault("zone_matrix", {})
+                        for origin, dests in pinlist["zone_matrix"].items():
+                            detected["zone_matrix"].setdefault(origin, {})
+                            for dest, rate in dests.items():
+                                detected["zone_matrix"][origin].setdefault(dest, rate)
 
             # 3. Charges — section-aware extraction
             # Segment rows into typed sections so VOLUMETRIC rows don't
@@ -1723,6 +1732,12 @@ class ExcelParser(BaseParser):
         state_col = None
         city_col = None
         rate_col = None
+        # A second "Zone" column distinct from the row's own zone_col — some
+        # rate cards attach a small "Zone | Price (Per Kg)" side-table to the
+        # first few pincode rows, giving the price FROM that row's own zone TO
+        # the zone named in this column. Only set when a *different* zone
+        # header is found after zone_col is already claimed (see loop below).
+        dest_zone_col = None
 
         # Expanded set of pincode header names
         _PIN_HEADER_EXACT = {
@@ -1781,9 +1796,13 @@ class ExcelParser(BaseParser):
                         city_col = ci
                     elif any(kw in h for kw in self._LF_RATE_PATTERNS) or "safeexpress" in h:
                         rate_col = ci
-                    if ("zone" in h) and zone_col is None and ci != pin_col:
-                        zone_col = ci
-                        print(f"[Excel:{sheet_name}] Zone col: {ci} ('{h}')")
+                    if ("zone" in h) and ci != pin_col:
+                        if zone_col is None:
+                            zone_col = ci
+                            print(f"[Excel:{sheet_name}] Zone col: {ci} ('{h}')")
+                        elif dest_zone_col is None and ci != zone_col:
+                            dest_zone_col = ci
+                            print(f"[Excel:{sheet_name}] Destination-zone col: {ci} ('{h}')")
                     # "category" / "cat" / "type" column — may have ODA values like "ODA A", "ODA B"
                     if h in ("category", "cat", "type", "service type", "shipment type") and _category_col is None:
                         _category_col = ci
@@ -1849,6 +1868,9 @@ class ExcelParser(BaseParser):
         # so it can evolve without touching every parser.
         geo_hints: Dict[int, Tuple[str, str]] = {}
         rates: Dict[int, float] = {}
+        # origin zone (this row's own zone_col) -> dest zone (dest_zone_col) -> [rates]
+        # Only populated when both columns exist — see dest_zone_col comment above.
+        zone_rate_samples: Dict[str, Dict[str, List[float]]] = {}
         skipped = 0
 
         has_delivery_col = delivery_col is not None
@@ -1938,6 +1960,17 @@ class ExcelParser(BaseParser):
                 if rate_val is not None and rate_val > 0:
                     rates[pin] = rate_val
 
+                    # Zone-to-zone side-table: this row's own zone (zone_col) is
+                    # the origin, dest_zone_col names the destination, rate_col
+                    # is the price between them — independent of which specific
+                    # pincode the rate happens to be attached to.
+                    if dest_zone_col is not None and dest_zone_col < len(row) and zone_col is not None and zone_col < len(row):
+                        origin_z = _cell_str(row[zone_col]).strip().upper()
+                        dest_z = _cell_str(row[dest_zone_col]).strip().upper()
+                        if origin_z and dest_z and origin_z not in ("", "NONE", "NULL", "N/A", "NA", "-", "ZONE") \
+                                and dest_z not in ("", "NONE", "NULL", "N/A", "NA", "-", "ZONE"):
+                            zone_rate_samples.setdefault(origin_z, {}).setdefault(dest_z, []).append(rate_val)
+
             # Zone assignment
             if zone_col is not None and zone_col < len(row):
                 z_raw = _cell_str(row[zone_col]).strip().upper()
@@ -1975,6 +2008,17 @@ class ExcelParser(BaseParser):
         if rates:
             result["rates"] = rates
             print(f"[Excel:{sheet_name}]   Captured flat rates for {len(rates)} pincodes (rate_col={rate_col})")
+        if zone_rate_samples:
+            import statistics
+            zone_matrix = {
+                origin: {dest: round(statistics.median(vals), 2) for dest, vals in dests.items()}
+                for origin, dests in zone_rate_samples.items()
+            }
+            result["zone_matrix"] = zone_matrix
+            n_pairs = sum(len(d) for d in zone_matrix.values())
+            print(f"[Excel:{sheet_name}]   Built zone-to-zone rate matrix from side-table: "
+                  f"{len(zone_matrix)} origin zone(s), {n_pairs} rate pair(s) "
+                  f"(zone_col={zone_col}, dest_zone_col={dest_zone_col}, rate_col={rate_col})")
         return result
 
     # ------------------------------------------------------------------

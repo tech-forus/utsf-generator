@@ -160,6 +160,58 @@ APP_BUILD_DATE   = "2026-04-10"
 OICR_ENGINE      = "OICR v9.0"
 UTSF_SCHEMA      = "UTSF v2.1"
 
+# Deploy-freshness info — resolved ONCE at import so /api/status can trivially
+# reveal whether the running service is the latest code or a stale build.
+# Robust to Railway stripping the .git folder: falls back to the git SHA that
+# Railway injects into the environment, then to "unknown".
+def _resolve_build_info():
+    import subprocess as _sp
+    from datetime import datetime as _dt
+
+    commit_short = "unknown"
+    commit_full  = "unknown"
+    commit_time  = None
+    branch       = None
+
+    def _git(args):
+        try:
+            return _sp.check_output(
+                ["git", *args], cwd=ROOT_DIR,
+                stderr=_sp.DEVNULL, timeout=5,
+            ).decode().strip() or None
+        except Exception:
+            return None
+
+    commit_full = _git(["rev-parse", "HEAD"]) or ""
+    if commit_full:
+        commit_short = commit_full[:7]
+        commit_time  = _git(["show", "-s", "--format=%cI", "HEAD"])
+        branch       = _git(["rev-parse", "--abbrev-ref", "HEAD"])
+    else:
+        # No .git available (e.g. Railway image) — use platform-injected env vars.
+        env_sha = (
+            os.environ.get("RAILWAY_GIT_COMMIT_SHA")
+            or os.environ.get("GIT_COMMIT")
+            or os.environ.get("SOURCE_COMMIT")
+            or ""
+        )
+        if env_sha:
+            commit_full  = env_sha
+            commit_short = env_sha[:7]
+        branch = os.environ.get("RAILWAY_GIT_BRANCH")
+
+    return {
+        "commit":        commit_short,          # short SHA — the quick check
+        "commit_full":   commit_full or "unknown",
+        "commit_time":   commit_time,           # when that commit was authored (if known)
+        "branch":        branch,
+        # When THIS process booted ≈ when Railway last (re)deployed. If this is
+        # old, the service hasn't been redeployed since.
+        "started_at":    _dt.utcnow().isoformat() + "Z",
+    }
+
+BUILD_INFO = _resolve_build_info()
+
 # Inject version into every template context
 @app.context_processor
 def inject_version():
@@ -1722,6 +1774,13 @@ def api_status():
         "app_version":   APP_VERSION,
         "oicr_engine":   OICR_ENGINE,
         "utsf_schema":   UTSF_SCHEMA,
+        # Deploy-freshness — check `commit` against the latest git SHA to tell
+        # whether Railway is running the current code or a stale build.
+        "commit":        BUILD_INFO["commit"],
+        "commit_full":   BUILD_INFO["commit_full"],
+        "commit_time":   BUILD_INFO["commit_time"],
+        "branch":        BUILD_INFO["branch"],
+        "started_at":    BUILD_INFO["started_at"],
     })
 
 
